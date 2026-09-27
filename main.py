@@ -1,23 +1,20 @@
 from flask import Flask, jsonify, Response, request
 import requests
 from bs4 import BeautifulSoup
-import re
 import html
-
-app = Flask(name)
+import re
+app = Flask(__name__)
 
 CRICBUZZ_URL = "https://www.cricbuzz.com/cricket-match/live-scores"
 
 HEADERS = {
-"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
+"User-Agent": "Mozilla/5.0"
 }
-
-# Selected match for OBS
 
 selected_match = {
 "id": None,
 "name": None,
-"details": None
+"url": None
 }
 
 def fetch_live_scores():
@@ -31,53 +28,60 @@ timeout=15
 ```
     response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
+    )
 
     matches = []
 
-    # Cricbuzz match cards
-    items = soup.select(".cb-mtch-lst")
-
-    for index, item in enumerate(items):
+    for index, item in enumerate(
+        soup.select(".cb-mtch-lst")
+    ):
         text = " ".join(item.stripped_strings)
 
         if not text:
             continue
 
-        # Try to find a match URL
-        link = item.select_one("a[href*='/live-cricket-scores/']")
+        link = item.select_one(
+            "a[href*='/live-cricket-scores/']"
+        )
 
-        match_url = ""
+        url = ""
+
         if link:
-            match_url = link.get("href", "")
+            url = link.get("href", "")
 
-        if match_url.startswith("/"):
-            match_url = "https://www.cricbuzz.com" + match_url
+        if url.startswith("/"):
+            url = "https://www.cricbuzz.com" + url
 
-        # Generate an ID
         match_id = str(index)
 
-        id_match = re.search(r"(\d{5,})", match_url)
-        if id_match:
-            match_id = id_match.group(1)
+        found_id = re.search(
+            r"(\d{5,})",
+            url
+        )
+
+        if found_id:
+            match_id = found_id.group(1)
 
         matches.append({
             "id": match_id,
             "name": text,
-            "url": match_url
+            "url": url
         })
 
     return {
         "success": True,
-        "matches": matches,
-        "count": len(matches)
+        "count": len(matches),
+        "matches": matches
     }
 
 except Exception as error:
     return {
         "success": False,
-        "matches": [],
         "count": 0,
+        "matches": [],
         "error": str(error)
     }
 ```
@@ -92,60 +96,92 @@ return jsonify({
 
 @app.route("/live-scores")
 def live_scores():
-return jsonify(fetch_live_scores())
+return jsonify(
+fetch_live_scores()
+)
 
-@app.route("/select-match")
-def select_match():
+@app.route("/select-match", methods=["GET"])
+def select_match_page():
 data = fetch_live_scores()
 
 ```
-matches = data.get("matches", [])
+matches = data.get(
+    "matches",
+    []
+)
 
-match_html = ""
+cards = ""
 
-if not matches:
-    match_html = """
-    <div class="empty">
-        No live or today's matches were found.
-        <br><br>
-        Try refreshing this page.
+for match in matches:
+    match_id = html.escape(
+        str(match["id"])
+    )
+
+    match_name = html.escape(
+        match["name"]
+    )
+
+    cards += f"""
+    <div class="match">
+
+        <div class="live">
+            ● LIVE / MATCH
+        </div>
+
+        <div class="name">
+            {match_name}
+        </div>
+
+        <form method="POST"
+              action="/select-match">
+
+            <input
+                type="hidden"
+                name="match_id"
+                value="{match_id}"
+            >
+
+            <button type="submit">
+                SELECT THIS MATCH
+            </button>
+
+        </form>
+
     </div>
     """
 
-else:
-    for match in matches:
-        match_id = html.escape(str(match["id"]))
-        match_name = html.escape(match["name"])
+if not cards:
+    cards = """
+    <div class="empty">
+        No matches found.
+        <br><br>
+        Click REFRESH MATCHES.
+    </div>
+    """
 
-        match_html += f"""
-        <div class="match">
-            <div class="status">● LIVE / MATCH</div>
-
-            <div class="match-name">
-                {match_name}
-            </div>
-
-            <form action="/select-match" method="post">
-                <input type="hidden" name="match_id" value="{match_id}">
-                <button type="submit">
-                    SELECT THIS MATCH
-                </button>
-            </form>
-        </div>
-        """
-
-selected = ""
+selected_html = ""
 
 if selected_match["id"]:
-    selected = f"""
+    selected_html = f"""
     <div class="selected">
-        ✓ SELECTED MATCH
-        <br>
-        <strong>{html.escape(str(selected_match["name"]))}</strong>
+
+        <div>
+            ✓ SELECTED MATCH
+        </div>
+
+        <strong>
+            {html.escape(
+                str(selected_match["name"])
+            )}
+        </strong>
+
         <br><br>
+
         OBS URL:
         <br>
+
         <code>/scoreboard</code>
+
     </div>
     """
 
@@ -155,70 +191,64 @@ page = f"""
 <!DOCTYPE html>
 
 <html>
+
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>Select Cricket Match</title>
 
 <style>
 
-* {{
-    box-sizing: border-box;
-}}
-
 body {{
     margin: 0;
     background: #101010;
     color: white;
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: Arial, sans-serif;
 }}
 
 .container {{
+    width: 90%;
     max-width: 900px;
     margin: 40px auto;
-    padding: 20px;
 }}
 
 h1 {{
-    margin-bottom: 5px;
     font-size: 32px;
 }}
 
 .subtitle {{
     color: #aaa;
-    margin-bottom: 30px;
+    margin-bottom: 25px;
 }}
 
 .match {{
-    background: #1c1c1c;
+    background: #1d1d1d;
     border: 1px solid #333;
     border-radius: 12px;
-    padding: 22px;
+    padding: 20px;
     margin-bottom: 15px;
 }}
 
-.status {{
+.live {{
     color: #00e676;
     font-size: 13px;
     font-weight: bold;
     margin-bottom: 10px;
 }}
 
-.match-name {{
+.name {{
     font-size: 20px;
     font-weight: bold;
-    line-height: 1.5;
     margin-bottom: 18px;
 }}
 
 button {{
     background: #00c853;
     color: white;
-    border: 0;
-    padding: 13px 22px;
+    border: none;
     border-radius: 7px;
-    font-size: 14px;
+    padding: 12px 20px;
     font-weight: bold;
     cursor: pointer;
 }}
@@ -227,32 +257,32 @@ button:hover {{
     background: #00e676;
 }}
 
+.refresh {{
+    background: #333;
+    margin-bottom: 20px;
+}}
+
 .selected {{
     background: #12351f;
     border: 1px solid #00c853;
-    padding: 20px;
     border-radius: 10px;
-    margin-bottom: 25px;
+    padding: 20px;
+    margin-bottom: 20px;
     line-height: 1.6;
 }}
 
+.empty {{
+    background: #1d1d1d;
+    padding: 30px;
+    text-align: center;
+    color: #aaa;
+    border-radius: 10px;
+}}
+
 code {{
-    background: #000;
+    background: black;
     padding: 5px 8px;
     border-radius: 5px;
-}}
-
-.empty {{
-    background: #1c1c1c;
-    padding: 30px;
-    border-radius: 12px;
-    color: #aaa;
-    text-align: center;
-}}
-
-.refresh {{
-    margin-bottom: 25px;
-    background: #333;
 }}
 
 </style>
@@ -263,33 +293,42 @@ code {{
 
 <div class="container">
 
-<h1>🏏 CRICKET LIVE SCORE</h1>
+<h1>
+🏏 CRICKET LIVE SCORE
+</h1>
 
 <div class="subtitle">
-Select the match you want to display in OBS.
+Select today's match for your OBS scoreboard.
 </div>
 
-{selected}
+{selected_html}
 
-<button class="refresh" onclick="location.reload()">
-↻ REFRESH MATCHES
-</button>
+<button
+ class="refresh"
+ onclick="location.reload()">
+↻ REFRESH MATCHES </button>
 
-{match_html}
+{cards}
 
 </div>
 
 </body>
+
 </html>
 """
 
 ```
-return Response(page, mimetype="text/html")
+return Response(
+    page,
+    mimetype="text/html"
+)
 ```
 
 @app.route("/select-match", methods=["POST"])
-def choose_match():
-match_id = request.form.get("match_id")
+def select_match():
+match_id = request.form.get(
+"match_id"
+)
 
 ```
 if not match_id:
@@ -297,49 +336,47 @@ if not match_id:
 
 data = fetch_live_scores()
 
-for match in data.get("matches", []):
+for match in data.get(
+    "matches",
+    []
+):
+
     if str(match["id"]) == str(match_id):
 
         selected_match["id"] = match["id"]
+
         selected_match["name"] = match["name"]
-        selected_match["details"] = match
+
+        selected_match["url"] = match["url"]
 
         return """
-        <!DOCTYPE html>
         <html>
         <head>
-        <meta http-equiv="refresh" content="2;url=/select-match">
-        <style>
-        body {
+        <meta http-equiv="refresh"
+              content="1;url=/select-match">
+        </head>
+
+        <body style="
             background:#101010;
             color:white;
             font-family:Arial;
             text-align:center;
             padding-top:100px;
-        }
-        .box {
-            display:inline-block;
-            background:#12351f;
-            border:1px solid #00c853;
-            padding:30px;
-            border-radius:12px;
-        }
-        </style>
-        </head>
-        <body>
-        <div class="box">
-        <h2>✓ Match Selected</h2>
-        <p>Opening match selector...</p>
-        </div>
+        ">
+
+        <h1>✓ Match Selected</h1>
+
+        <p>Returning to match selector...</p>
+
         </body>
         </html>
         """
 
-return "Match not found. Refresh and try again.", 404
+return "Match not found. Refresh the selector.", 404
 ```
 
 @app.route("/selected-match")
-def selected():
+def get_selected_match():
 return jsonify({
 "success": True,
 "selected_match": selected_match
@@ -349,12 +386,13 @@ return jsonify({
 def scoreboard():
 
 ```
-scoreboard_html = """
+page = """
 ```
 
 <!DOCTYPE html>
 
 <html>
+
 <head>
 
 <meta charset="UTF-8">
@@ -371,49 +409,42 @@ body {
     height: 100%;
     background: transparent !important;
     overflow: hidden;
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: Arial, sans-serif;
 }
 
-#scoreboard {
+.scoreboard {
     position: absolute;
     left: 20px;
     bottom: 20px;
 
     min-width: 420px;
-    max-width: 900px;
+
+    padding: 14px 22px;
 
     background: rgba(0, 0, 0, 0.88);
+
     color: white;
 
     border-radius: 10px;
 
-    padding: 14px 22px;
-
-    box-shadow: 0 4px 18px rgba(0,0,0,0.35);
-
     font-weight: bold;
 }
 
-#live {
+.live {
     color: #00e676;
     font-size: 13px;
     margin-bottom: 7px;
 }
 
-#score {
+.score {
     font-size: 23px;
     line-height: 1.35;
 }
 
-#updated {
+.updated {
     color: #999;
     font-size: 11px;
     margin-top: 6px;
-}
-
-#error {
-    color: #ff5252;
-    font-size: 14px;
 }
 
 </style>
@@ -422,18 +453,23 @@ body {
 
 <body>
 
-<div id="scoreboard">
+<div class="scoreboard">
 
 ```
-<div id="live">
+<div class="live">
     ● LIVE CRICKET
 </div>
 
-<div id="score">
-    Loading score...
+<div
+    id="score"
+    class="score">
+    Loading...
 </div>
 
-<div id="updated"></div>
+<div
+    id="updated"
+    class="updated">
+</div>
 ```
 
 </div>
@@ -445,137 +481,72 @@ async function updateScore() {
     try {
 
         const response = await fetch(
-            "/selected-match?t=" + Date.now(),
+            "/selected-match?t=" +
+            Date.now(),
             {
                 cache: "no-store"
             }
         );
 
-        const data = await response.json();
+        const data =
+            await response.json();
 
-        const selected = data.selected_match;
+        const match =
+            data.selected_match;
 
-        if (!selected || !selected.id) {
+        if (!match || !match.id) {
 
-            document.getElementById("score").textContent =
+            document.getElementById(
+                "score"
+            ).textContent =
                 "No match selected";
 
-            document.getElementById("updated").textContent =
-                "Open /select-match to choose a match";
+            document.getElementById(
+                "updated"
+            ).textContent =
+                "Open /select-match";
 
             return;
         }
 
-        document.getElementById("score").textContent =
-            selected.name;
+        document.getElementById(
+            "score"
+        ).textContent =
+            match.name;
 
-        document.getElementById("updated").textContent =
-            "Selected match";
+        document.getElementById(
+            "updated"
+        ).textContent =
+            "Selected match • Auto refresh";
 
-    }
+    } catch (error) {
 
-    catch (error) {
-
-        document.getElementById("score").textContent =
+        document.getElementById(
+            "score"
+        ).textContent =
             "Unable to load score";
 
     }
 
 }
 
-
-async function refreshLiveScore() {
-
-    try {
-
-        const response = await fetch(
-            "/live-scores?t=" + Date.now(),
-            {
-                cache: "no-store"
-            }
-        );
-
-        const data = await response.json();
-
-        const selected = await fetch(
-            "/selected-match?t=" + Date.now(),
-            {
-                cache: "no-store"
-            }
-        );
-
-        const selectedData = await selected.json();
-
-        const selectedMatch =
-            selectedData.selected_match;
-
-        if (!selectedMatch || !selectedMatch.id) {
-
-            document.getElementById("score").textContent =
-                "No match selected";
-
-            return;
-        }
-
-        let found = null;
-
-        for (const match of data.matches || []) {
-
-            if (
-                String(match.id) ===
-                String(selectedMatch.id)
-            ) {
-                found = match;
-                break;
-            }
-
-        }
-
-        if (found) {
-
-            document.getElementById("score").textContent =
-                found.name;
-
-            document.getElementById("updated").textContent =
-                "Live • Auto refresh";
-
-        } else {
-
-            document.getElementById("score").textContent =
-                selectedMatch.name;
-
-            document.getElementById("updated").textContent =
-                "Selected match • Waiting for update";
-
-        }
-
-    }
-
-    catch (error) {
-
-        document.getElementById("error").textContent =
-            "Unable to load live score";
-
-    }
-
-}
-
-
 updateScore();
 
-refreshLiveScore();
-
-setInterval(refreshLiveScore, 15000);
+setInterval(
+    updateScore,
+    15000
+);
 
 </script>
 
 </body>
+
 </html>
 """
 
 ```
 return Response(
-    scoreboard_html,
+    page,
     mimetype="text/html"
 )
 ```
@@ -584,12 +555,9 @@ return Response(
 def debug():
 
 ```
-data = fetch_live_scores()
-
 return jsonify({
-    "success": True,
     "selected_match": selected_match,
-    "live_score_data": data
+    "live_scores": fetch_live_scores()
 })
 ```
 
@@ -597,9 +565,9 @@ return jsonify({
 def debug_match():
 
 ```
-data = fetch_live_scores()
-
-return jsonify(data)
+return jsonify(
+    fetch_live_scores()
+)
 ```
 
 if **name** == "**main**":

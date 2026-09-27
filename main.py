@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, Response
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -31,6 +31,7 @@ def home():
         "status": "online",
         "endpoints": [
             "/live-scores",
+            "/scoreboard",
             "/debug",
             "/debug-match"
         ]
@@ -115,7 +116,6 @@ def parse_live_matches(html):
         r"innings\s+break",
         r"opt\s+to\s+(?:bat|bowl)",
         r"stumps",
-        r"live",
         r"match\s+abandoned",
         r"toss\s+delayed[^|]*"
     ]
@@ -205,6 +205,7 @@ def parse_live_matches(html):
 
 @app.route("/live-scores")
 def live_scores():
+
     try:
         html = fetch_cricbuzz()
         matches = parse_live_matches(html)
@@ -218,6 +219,7 @@ def live_scores():
         })
 
     except requests.RequestException as e:
+
         return jsonify({
             "success": False,
             "count": 0,
@@ -227,6 +229,7 @@ def live_scores():
         }), 502
 
     except Exception as e:
+
         return jsonify({
             "success": False,
             "count": 0,
@@ -236,102 +239,93 @@ def live_scores():
         }), 500
 
 
-@app.route("/debug")
-def debug():
-    try:
-        html = fetch_cricbuzz()
+@app.route("/scoreboard")
+def scoreboard():
 
-        soup = BeautifulSoup(html, "html.parser")
+    html = """
+<!DOCTYPE html>
+<html>
+<head>
 
-        for tag in soup(["script", "style", "noscript"]):
-            tag.decompose()
+<meta charset="UTF-8">
 
-        page_text = clean_text(
-            soup.get_text(" ", strip=True)
-        )
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
 
-        return jsonify({
-            "success": True,
-            "status_code": 200,
-            "page_length": len(html),
-            "india_found": "India" in html,
-            "west_indies_found": "West Indies" in html,
-            "score_samples": extract_scores(page_text)[:30],
-            "page_preview": page_text[:3000]
-        })
+<title>Live Cricket Score</title>
 
-    except requests.RequestException as e:
-        return jsonify({
-            "success": False,
-            "error": "Cricbuzz request failed",
-            "details": str(e)
-        }), 502
+<style>
 
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: Arial, Helvetica, sans-serif;
+}
 
+#container {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 15px;
+}
 
-@app.route("/debug-match")
-def debug_match():
-    try:
-        html = fetch_cricbuzz()
+.scoreboard {
+    width: 700px;
+    max-width: 100%;
+    box-sizing: border-box;
 
-        search_terms = [
-            "West Indies tour of India",
-            "West Indies",
-            "India need",
-            "WI",
-            "IND"
-        ]
+    background: rgba(8, 12, 18, 0.96);
 
-        position = -1
-        matched_term = None
+    border-radius: 14px;
 
-        for term in search_terms:
-            position = html.find(term)
+    border: 2px solid rgba(255, 255, 255, 0.15);
 
-            if position != -1:
-                matched_term = term
-                break
+    color: white;
 
-        if position == -1:
-            return jsonify({
-                "success": False,
-                "message": "Match text not found",
-                "page_length": len(html)
-            })
+    padding: 18px;
 
-        start = max(0, position - 5000)
-        end = min(len(html), position + 15000)
+    box-shadow:
+        0 8px 30px rgba(0, 0, 0, 0.45);
+}
 
-        return jsonify({
-            "success": True,
-            "matched_term": matched_term,
-            "position": position,
-            "html_length": len(html),
-            "section": html[start:end]
-        })
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 
-    except requests.RequestException as e:
-        return jsonify({
-            "success": False,
-            "error": "Cricbuzz request failed",
-            "details": str(e)
-        }), 502
+    margin-bottom: 14px;
+}
 
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+.title {
+    font-size: 24px;
+    font-weight: bold;
+}
 
+.live {
+    color: #ffffff;
+    background: #e00000;
 
-if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=10000,
-        debug=False
-    )
+    padding: 5px 10px;
+
+    border-radius: 6px;
+
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.match {
+    padding: 14px 0;
+
+    border-top: 1px solid
+        rgba(255, 255, 255, 0.15);
+}
+
+.match:first-child {
+    border-top: none;
+}
+
+.match-title

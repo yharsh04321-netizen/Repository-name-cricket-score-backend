@@ -2,17 +2,26 @@ from flask import Flask, jsonify, Response
 import requests
 from bs4 import BeautifulSoup
 import re
-import os
+import json
+import time
 
 app = Flask(**name**)
 
-CRICBUZZ_URL = "https://www.cricbuzz.com/live-cricket-scores"
+CRICBUZZ_URL = "https://www.cricbuzz.com/cricket-match/live-scores"
 
-def get_live_scores():
+HEADERS = {
+"User-Agent": (
+"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+"AppleWebKit/537.36 (KHTML, like Gecko) "
+"Chrome/131.0.0.0 Safari/537.36"
+)
+}
+
+def fetch_live_scores():
 try:
 response = requests.get(
 CRICBUZZ_URL,
-headers={"User-Agent": "Mozilla/5.0"},
+headers=HEADERS,
 timeout=15
 )
 
@@ -23,36 +32,99 @@ timeout=15
 
     matches = []
 
-    for item in soup.select(".cb-col.cb-col-100.cb-scrd-itms"):
+    for item in soup.select(".cb-mtch-lst"):
         text = " ".join(item.stripped_strings)
 
         if not text:
             continue
 
-        scores = re.findall(
-            r"\b\d+(?:-\d+)?\s*\(\d+(?:\.\d+)?\)",
-            text
-        )
+        matches.append({
+            "text": text
+        })
 
-        if scores:
-            matches.append({
-                "text": text,
-                "scores": scores
-            })
+    if not matches:
+        for item in soup.select(".cb-mtch-lst-v1"):
+            text = " ".join(item.stripped_strings)
 
-    return matches
+            if text:
+                matches.append({
+                    "text": text
+                })
 
-except Exception as e:
-    print("Score fetch error:", e)
-    return []
+    return {
+        "success": True,
+        "matches": matches,
+        "count": len(matches),
+        "source": "Cricbuzz"
+    }
+
+except requests.RequestException as exc:
+    return {
+        "success": False,
+        "matches": [],
+        "count": 0,
+        "error": f"Network error: {str(exc)}",
+        "source": "Cricbuzz"
+    }
+
+except Exception as exc:
+    return {
+        "success": False,
+        "matches": [],
+        "count": 0,
+        "error": str(exc),
+        "source": "Cricbuzz"
+    }
+```
+
+def parse_score(text):
+if not text:
+return {
+"team1": "",
+"team2": "",
+"score1": "",
+"score2": "",
+"status": ""
+}
+
+```
+score_patterns = re.findall(
+    r"\b\d{1,4}/\d{1,3}(?:\s*\(\d+(?:\.\d+)?\))?",
+    text
+)
+
+status = ""
+
+lower = text.lower()
+
+if "won" in lower:
+    status = text
+elif "live" in lower:
+    status = "LIVE"
+elif "stumps" in lower:
+    status = "STUMPS"
+elif "innings break" in lower:
+    status = "INNINGS BREAK"
+elif "break" in lower:
+    status = "BREAK"
+elif "scheduled" in lower:
+    status = "SCHEDULED"
+
+return {
+    "team1": "",
+    "team2": "",
+    "score1": score_patterns[0] if len(score_patterns) > 0 else "",
+    "score2": score_patterns[1] if len(score_patterns) > 1 else "",
+    "status": status
+}
 ```
 
 @app.route("/")
 def home():
 return jsonify({
-"success": True,
-"status": "online",
 "service": "Cricket Live Score Backend",
+"status": "online",
+"success": True,
 "endpoints": [
 "/live-scores",
 "/scoreboard",
@@ -63,315 +135,218 @@ return jsonify({
 
 @app.route("/live-scores")
 def live_scores():
-matches = get_live_scores()
-
-```
-return jsonify({
-    "success": True,
-    "count": len(matches),
-    "matches": matches
-})
-```
+data = fetch_live_scores()
+return jsonify(data)
 
 @app.route("/debug")
 def debug():
-matches = get_live_scores()
+data = fetch_live_scores()
 
 ```
 return jsonify({
-    "success": True,
-    "count": len(matches),
-    "matches": matches
+    "success": data.get("success", False),
+    "count": data.get("count", 0),
+    "error": data.get("error"),
+    "matches": data.get("matches", [])
 })
 ```
 
 @app.route("/debug-match")
 def debug_match():
-matches = get_live_scores()
+data = fetch_live_scores()
 
 ```
+if not data.get("matches"):
+    return jsonify({
+        "success": False,
+        "message": "No live match found",
+        "data": data
+    })
+
+first_match = data["matches"][0]
+
 return jsonify({
     "success": True,
-    "matches": matches[:5]
+    "raw": first_match,
+    "parsed": parse_score(first_match.get("text", ""))
 })
 ```
 
 @app.route("/scoreboard")
 def scoreboard():
-
-```
-page = """
-```
+html = """
 
 <!DOCTYPE html>
 
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Cricket OBS Scoreboard</title>
+<title>Cricket Scoreboard</title>
 
 <style>
-
 html,
 body {
     margin: 0;
     padding: 0;
     width: 100%;
     height: 100%;
-    background: transparent !important;
+    background: transparent;
     overflow: hidden;
     font-family: Arial, Helvetica, sans-serif;
 }
 
 body {
-    background: rgba(0,0,0,0) !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-#scoreboard {
-    position: absolute;
-    left: 30px;
-    right: 30px;
-    bottom: 30px;
+.scoreboard {
+    width: 96%;
+    max-width: 1100px;
+    min-height: 110px;
+    box-sizing: border-box;
 
-    background: rgba(10,10,10,0.88);
-
-    border: 2px solid rgba(255,255,255,0.15);
+    background: rgba(10, 15, 25, 0.92);
+    border: 2px solid rgba(255, 255, 255, 0.18);
     border-radius: 14px;
-
-    box-shadow: 0 8px 30px rgba(0,0,0,0.45);
 
     color: white;
 
-    overflow: hidden;
+    box-shadow:
+        0 8px 30px rgba(0, 0, 0, 0.35);
 
-    display: none;
+    overflow: hidden;
 }
 
 .header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
 
     padding: 10px 18px;
 
-    background: linear-gradient(
-        90deg,
-        rgba(0,120,255,0.95),
-        rgba(0,180,120,0.95)
-    );
+    background: rgba(0, 0, 0, 0.35);
 
+    font-size: 14px;
     font-weight: bold;
-    font-size: 18px;
 }
 
 .live {
     display: flex;
     align-items: center;
     gap: 7px;
+
+    color: #ff5252;
 }
 
 .live-dot {
-    width: 9px;
-    height: 9px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    background: #ff3030;
-    box-shadow: 0 0 10px #ff3030;
+    background: #ff3b30;
+
+    box-shadow: 0 0 10px #ff3b30;
 }
 
-.match {
-    padding: 15px 20px;
+.content {
+    padding: 18px 22px;
 }
 
-.teams {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-}
-
-.team {
-    flex: 1;
+.match-text {
     font-size: 24px;
-    font-weight: bold;
+    line-height: 1.35;
+    font-weight: 700;
+    text-align: center;
 }
 
-.team.right {
-    text-align: right;
+.empty {
+    color: rgba(255, 255, 255, 0.65);
+    text-align: center;
+    font-size: 20px;
 }
 
-.score {
-    font-size: 34px;
-    font-weight: 900;
-    white-space: nowrap;
+.error {
+    color: #ff8a80;
+    text-align: center;
+    font-size: 16px;
 }
-
-.status {
-    margin-top: 8px;
-    font-size: 17px;
-    font-weight: bold;
-    color: #7dff9c;
-}
-
-.details {
-    margin-top: 6px;
-    color: rgba(255,255,255,0.7);
-    font-size: 14px;
-}
-
 </style>
 
 </head>
 
 <body>
 
-<div id="scoreboard">
+<div class="scoreboard">
 
 ```
 <div class="header">
-
-    <div>CRICKET LIVE</div>
+    <div>CRICKET LIVE SCORE</div>
 
     <div class="live">
         <span class="live-dot"></span>
         LIVE
     </div>
-
 </div>
 
-<div id="content"></div>
+<div class="content">
+    <div id="score" class="empty">
+        Loading live score...
+    </div>
+</div>
 ```
 
 </div>
 
 <script>
-
-function escapeHTML(value) {
-    return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-
-function showScoreboard(matches) {
-
-    const board = document.getElementById("scoreboard");
-    const content = document.getElementById("content");
-
-    if (!matches || matches.length === 0) {
-        board.style.display = "none";
-        return;
-    }
-
-    const match = matches[0];
-
-    const text = match.text || "";
-    const scores = match.scores || [];
-
-    const score1 = scores[0] || "";
-    const score2 = scores[1] || "";
-
-    let team1 = "TEAM 1";
-    let team2 = "TEAM 2";
-
-    const parts = text.split(" ");
-    const teamNames = [];
-
-    for (let i = 0; i < parts.length; i++) {
-
-        if (
-            parts[i].length >= 2 &&
-            parts[i].length <= 5 &&
-            /^[A-Z]+$/.test(parts[i])
-        ) {
-
-            if (
-                parts[i] !== "LIVE" &&
-                parts[i] !== "SCORE" &&
-                parts[i] !== "ODI" &&
-                parts[i] !== "TEST" &&
-                parts[i] !== "T20"
-            ) {
-                teamNames.push(parts[i]);
-            }
-        }
-    }
-
-    if (teamNames.length >= 2) {
-        team1 = teamNames[0];
-        team2 = teamNames[1];
-    }
-
-    content.innerHTML = `
-        <div class="match">
-
-            <div class="teams">
-
-                <div class="team">
-                    ${escapeHTML(team1)}
-                </div>
-
-                <div class="score">
-                    ${escapeHTML(score1)}
-                </div>
-
-                <div class="team right">
-                    ${escapeHTML(team2)}
-                </div>
-
-            </div>
-
-            ${
-                match.status
-                ? `<div class="status">${escapeHTML(match.status)}</div>`
-                : ""
-            }
-
-            <div class="details">
-                ${escapeHTML(text)}
-            </div>
-
-        </div>
-    `;
-
-    board.style.display = "block";
-}
-
-
-async function updateScoreboard() {
+async function loadScore() {
+    const scoreElement = document.getElementById("score");
 
     try {
-
-        const response = await fetch(
-            "/live-scores?t=" + Date.now(),
-            {
-                cache: "no-store"
-            }
-        );
+        const response = await fetch("/live-scores", {
+            cache: "no-store"
+        });
 
         if (!response.ok) {
-            throw new Error("API request failed");
+            throw new Error("HTTP " + response.status);
         }
 
         const data = await response.json();
 
-        showScoreboard(data.matches || []);
+        if (!data.success) {
+            scoreElement.className = "error";
+            scoreElement.textContent =
+                data.error || "Unable to load live score";
+            return;
+        }
+
+        if (!data.matches || data.matches.length === 0) {
+            scoreElement.className = "empty";
+            scoreElement.textContent =
+                "No live match currently available";
+            return;
+        }
+
+        scoreElement.className = "match-text";
+
+        const match = data.matches[0];
+
+        scoreElement.textContent =
+            match.text || "Live score unavailable";
 
     } catch (error) {
+        scoreElement.className = "error";
 
-        console.log("Score update failed:", error);
-
+        scoreElement.textContent =
+            "Unable to fetch live score";
     }
 }
 
+loadScore();
 
-updateScoreboard();
-
-setInterval(updateScoreboard, 15000);
-
+setInterval(loadScore, 15000);
 </script>
 
 </body>
@@ -379,15 +354,15 @@ setInterval(updateScoreboard, 15000);
 """
 
 ```
-return Response(page, mimetype="text/html")
+return Response(
+    html,
+    mimetype="text/html"
+)
 ```
 
 if **name** == "**main**":
-port = int(os.environ.get("PORT", 10000))
-
-```
 app.run(
-    host="0.0.0.0",
-    port=port
+host="0.0.0.0",
+port=10000,
+debug=False
 )
-```

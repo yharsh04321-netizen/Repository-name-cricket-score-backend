@@ -181,10 +181,7 @@ def parse_live_matches(html):
         normalized = clean_text(normalized)
 
         key = (
-            tuple(
-                x["display"]
-                for x in parsed_scores
-            ),
+            tuple(x["display"] for x in parsed_scores),
             status.lower(),
             normalized[:250].lower()
         )
@@ -242,90 +239,15 @@ def live_scores():
 @app.route("/scoreboard")
 def scoreboard():
 
-    html = """
-<!DOCTYPE html>
-<html>
-<head>
+    html = (
+        "<!DOCTYPE html>"
+        "<html>"
+        "<head>"
+        "<meta charset='UTF-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1.0'>"
+        "<title>Cricket Live Score</title>"
 
-<meta charset="UTF-8">
-
-<meta name="viewport"
-      content="width=device-width, initial-scale=1.0">
-
-<title>Live Cricket Score</title>
-
-<style>
-
-html, body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
-    background: transparent;
-    overflow: hidden;
-    font-family: Arial, Helvetica, sans-serif;
-}
-
-#container {
-    width: 100%;
-    height: 100%;
-    box-sizing: border-box;
-    padding: 15px;
-}
-
-.scoreboard {
-    width: 700px;
-    max-width: 100%;
-    box-sizing: border-box;
-
-    background: rgba(8, 12, 18, 0.96);
-
-    border-radius: 14px;
-
-    border: 2px solid rgba(255, 255, 255, 0.15);
-
-    color: white;
-
-    padding: 18px;
-
-    box-shadow:
-        0 8px 30px rgba(0, 0, 0, 0.45);
-}
-
-.header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-
-    margin-bottom: 14px;
-}
-
-.title {
-    font-size: 24px;
-    font-weight: bold;
-}
-
-.live {
-    color: #ffffff;
-    background: #e00000;
-
-    padding: 5px 10px;
-
-    border-radius: 6px;
-
-    font-size: 13px;
-    font-weight: bold;
-}
-
-.match {
-    padding: 14px 0;
-
-    border-top: 1px solid
-        rgba(255, 255, 255, 0.15);
-}
-
-.match:first-child {
-    border-top: none;
-}
-
-.match-title
+        "<style>"
+        "*{box-sizing:border-box}"
+        "html,body{"
+        "margin:

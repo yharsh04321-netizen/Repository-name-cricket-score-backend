@@ -4,211 +4,245 @@ from bs4 import BeautifulSoup
 import re
 import time
 
-app = Flask(__name__)
+app = Flask(**name**)
 
 CRICBUZZ_URL = "https://www.cricbuzz.com/cricket-match/live-scores"
+TIMEOUT = 15
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/140.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.cricbuzz.com/"
+def parse_score(text):
+if not text:
+return {
+"display": "",
+"runs": None,
+"wickets": None,
+"overs": None
 }
 
+```
+text = text.strip()
 
-def clean_text(text):
-    return re.sub(r"\s+", " ", str(text)).strip()
+match = re.search(
+    r"(\d+)\s*-\s*(\d+)(?:\s*\(([\d.]+)\))?",
+    text
+)
 
-
-def fetch_cricbuzz():
-    response = requests.get(
-        CRICBUZZ_URL,
-        headers=HEADERS,
-        timeout=20
-    )
-    response.raise_for_status()
-    return response.text
-
-
-def parse_score(value):
-    match = re.match(
-        r"^(\d{1,4})-(\d{1,2})(?:\s*\((\d{1,2}(?:\.\d)?)\))?$",
-        value
-    )
-
-    if not match:
-        return None
-
+if not match:
     return {
-        "display": value,
-        "runs": int(match.group(1)),
-        "wickets": int(match.group(2)),
-        "overs": match.group(3)
+        "display": text,
+        "runs": None,
+        "wickets": None,
+        "overs": None
     }
 
+return {
+    "display": text,
+    "runs": int(match.group(1)),
+    "wickets": int(match.group(2)),
+    "overs": match.group(3)
+}
+```
 
-def parse_live_matches(html_content):
-    soup = BeautifulSoup(html_content, "html.parser")
+def fetch_cricbuzz():
+headers = {
+"User-Agent": (
+"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+"AppleWebKit/537.36 "
+"(KHTML, like Gecko) "
+"Chrome/140.0.0.0 Safari/537.36"
+)
+}
 
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
+```
+response = requests.get(
+    CRICBUZZ_URL,
+    headers=headers,
+    timeout=TIMEOUT
+)
 
-    lines = []
+response.raise_for_status()
 
-    for line in soup.get_text("\n").splitlines():
-        line = clean_text(line)
+return BeautifulSoup(
+    response.text,
+    "html.parser"
+)
+```
 
-        if line:
-            lines.append(line)
+def get_live_scores():
+soup = fetch_cricbuzz()
 
-    score_pattern = re.compile(
-        r"\b\d{1,4}-\d{1,2}(?:\s*\(\d{1,2}(?:\.\d)?\))?"
+```
+matches = []
+
+cards = soup.select("div.cb-mtch-lst")
+
+for card in cards:
+
+    text = card.get_text(
+        " ",
+        strip=True
     )
 
-    status_patterns = [
-        r"need\s+\d+\s+runs?",
-        r"won\s+by\s+[^|]+",
-        r"innings\s+break",
-        r"stumps",
-        r"match\s+abandoned",
-        r"toss\s+delayed[^|]*",
-        r"match\s+delayed[^|]*",
-        r"live"
+    if not text:
+        continue
+
+    score_texts = re.findall(
+        r"\d+\s*-\s*\d+(?:\s*\([\d.]+\))?",
+        text
+    )
+
+    scores = [
+        parse_score(score)
+        for score in score_texts[:2]
     ]
 
-    matches = []
-    seen = set()
+    if not scores:
+        continue
 
-    for i, line in enumerate(lines):
+    status = ""
 
-        if not score_pattern.search(line):
-            continue
+    status_element = card.select_one(
+        ".cb-text-live, "
+        ".cb-text-complete, "
+        ".cb-text-inprogress, "
+        ".cb-text-stump"
+    )
 
-        start = max(0, i - 3)
-        end = min(len(lines), i + 4)
-
-        context = clean_text(" ".join(lines[start:end]))
-
-        if len(context) > 1200:
-            context = context[:1200]
-
-        score_values = list(
-            dict.fromkeys(score_pattern.findall(context))
+    if status_element:
+        status = status_element.get_text(
+            " ",
+            strip=True
         )
 
-        parsed_scores = []
+    matches.append({
+        "scores": scores,
+        "status": status,
+        "text": re.sub(
+            r"\s+",
+            " ",
+            text
+        ).strip()
+    })
 
-        for score in score_values:
-            parsed = parse_score(score)
-
-            if parsed:
-                parsed_scores.append(parsed)
-
-        if not parsed_scores:
-            continue
-
-        status = ""
-
-        for pattern in status_patterns:
-            found = re.search(
-                pattern,
-                context,
-                re.IGNORECASE
-            )
-
-            if found:
-                status = clean_text(found.group(0))
-                break
-
-        key = (
-            context[:250].lower(),
-            tuple(x["display"] for x in parsed_scores),
-            status.lower()
-        )
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-
-        matches.append({
-            "text": context,
-            "scores": parsed_scores,
-            "status": status
-        })
-
-    return matches
-
+return matches
+```
 
 @app.route("/")
 def home():
-    return jsonify({
-        "success": True,
-        "service": "Cricket Live Score Backend",
-        "status": "online",
-        "endpoints": [
-            "/live-scores",
-            "/scoreboard",
-            "/debug",
-            "/debug-match"
-        ]
-    })
-
+return jsonify({
+"success": True,
+"status": "online",
+"service": "Cricket Live Score Backend",
+"endpoints": [
+"/live-scores",
+"/scoreboard",
+"/debug",
+"/debug-match"
+]
+})
 
 @app.route("/live-scores")
 def live_scores():
 
-    try:
-        html_content = fetch_cricbuzz()
-        matches = parse_live_matches(html_content)
+```
+try:
 
-        return jsonify({
-            "success": True,
-            "count": len(matches),
-            "matches": matches,
-            "source": "Cricbuzz",
-            "timestamp": int(time.time())
-        })
+    matches = get_live_scores()
 
-    except requests.RequestException as e:
+    return jsonify({
+        "success": True,
+        "source": "Cricbuzz",
+        "count": len(matches),
+        "matches": matches,
+        "timestamp": int(time.time())
+    })
 
-        return jsonify({
-            "success": False,
-            "count": 0,
-            "matches": [],
-            "error": "Cricbuzz request failed",
-            "details": str(e)
-        }), 502
+except Exception as e:
 
-    except Exception as e:
+    return jsonify({
+        "success": False,
+        "source": "Cricbuzz",
+        "count": 0,
+        "matches": [],
+        "error": str(e),
+        "timestamp": int(time.time())
+    }), 500
+```
 
-        return jsonify({
-            "success": False,
-            "count": 0,
-            "matches": [],
-            "error": "Parser error",
-            "details": str(e)
-        }), 500
+@app.route("/debug")
+def debug():
 
+```
+try:
+
+    response = requests.get(
+        CRICBUZZ_URL,
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        },
+        timeout=TIMEOUT
+    )
+
+    return jsonify({
+        "success": True,
+        "status_code": response.status_code,
+        "page_length": len(response.text)
+    })
+
+except Exception as e:
+
+    return jsonify({
+        "success": False,
+        "error": str(e)
+    }), 500
+```
+
+@app.route("/debug-match")
+def debug_match():
+
+```
+try:
+
+    matches = get_live_scores()
+
+    return jsonify({
+        "success": True,
+        "count": len(matches),
+        "matches": matches[:5]
+    })
+
+except Exception as e:
+
+    return jsonify({
+        "success": False,
+        "error": str(e)
+    }), 500
+```
 
 @app.route("/scoreboard")
 def scoreboard():
 
-    return Response(
-        """
-<!DOCTYPE html>
+```
+html = """<!DOCTYPE html>
+```
+
 <html>
 <head>
 
 <meta charset="UTF-8">
 
+<meta
+name="viewport"
+content="width=device-width,initial-scale=1.0"
+
+>
+
 <title>Cricket Live Score</title>
 
 <style>
+
+* {
+    box-sizing: border-box;
+}
 
 html,
 body {
@@ -216,109 +250,223 @@ body {
     padding: 0;
     width: 100%;
     height: 100%;
-    background: transparent;
-    font-family: Arial, sans-serif;
+
+    overflow: hidden;
+
+    background: transparent !important;
 }
 
 body {
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    color: white;
+
+    background: transparent !important;
+
+    display: flex;
+
+    align-items: flex-end;
+
+    justify-content: center;
+
+    padding: 30px;
+}
+
+#scoreboard {
+
+    width: 100%;
+
+    max-width: 1700px;
+
+    display: none;
+
+    background:
+        linear-gradient(
+            135deg,
+            rgba(10,15,25,0.97),
+            rgba(20,25,35,0.94)
+        );
+
+    border: 2px solid
+        rgba(255,255,255,0.18);
+
+    border-radius: 18px;
+
+    box-shadow:
+        0 12px 40px
+        rgba(0,0,0,0.55);
+
     overflow: hidden;
 }
 
-.container {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 15px;
-}
+.header {
 
-.card {
-    max-width: 1100px;
-    margin: auto;
-    background: rgba(8, 12, 20, 0.96);
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    border-radius: 14px;
-    padding: 20px;
-    color: white;
-    box-sizing: border-box;
-}
-
-.top {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-}
 
-.title {
-    font-size: 24px;
-    font-weight: bold;
+    justify-content: space-between;
+
+    align-items: center;
+
+    padding: 12px 24px;
+
+    background:
+        rgba(255,255,255,0.08);
+
+    font-size: 18px;
+
+    font-weight: 800;
 }
 
 .live {
-    background: #e53935;
-    color: white;
-    padding: 6px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: bold;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 8px;
+
+    color: #7CFF8A;
 }
 
-.match {
-    font-size: 16px;
-    color: #d5d9e0;
+.dot {
+
+    width: 10px;
+
+    height: 10px;
+
+    border-radius: 50%;
+
+    background: #7CFF8A;
+
+    box-shadow:
+        0 0 12px #7CFF8A;
+}
+
+.content {
+
+    padding: 18px 25px 22px;
+}
+
+.title {
+
+    color:
+        rgba(255,255,255,0.68);
+
+    font-size: 19px;
+
     margin-bottom: 15px;
+
+    white-space: nowrap;
+
+    overflow: hidden;
+
+    text-overflow: ellipsis;
 }
 
 .teams {
+
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
+
+    grid-template-columns:
+        1fr 70px 1fr;
+
+    align-items: center;
+
+    gap: 20px;
 }
 
 .team {
-    background: rgba(255, 255, 255, 0.07);
-    border-radius: 10px;
-    padding: 15px;
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 5px;
 }
 
-.team-name {
-    font-size: 18px;
-    font-weight: bold;
-    margin-bottom: 8px;
+.team.right {
+
+    text-align: right;
+
+    align-items: flex-end;
+}
+
+.name {
+
+    font-size: 28px;
+
+    font-weight: 800;
 }
 
 .score {
-    font-size: 32px;
+
+    font-size: 48px;
+
+    line-height: 1;
+
     font-weight: 900;
 }
 
+.overs {
+
+    color:
+        rgba(255,255,255,0.60);
+
+    font-size: 17px;
+}
+
+.vs {
+
+    text-align: center;
+
+    color:
+        rgba(255,255,255,0.40);
+
+    font-weight: 800;
+
+    font-size: 18px;
+}
+
 .status {
-    margin-top: 14px;
-    font-size: 16px;
-    font-weight: bold;
-    color: #d5d9e0;
+
+    margin-top: 18px;
+
+    padding: 10px 15px;
+
+    border-radius: 10px;
+
+    background:
+        rgba(255,255,255,0.08);
+
+    text-align: center;
+
+    font-size: 20px;
+
+    font-weight: 800;
 }
 
-.footer {
-    margin-top: 12px;
-    text-align: right;
-    color: #8d96a5;
-    font-size: 11px;
-}
+#error {
 
-.error {
-    color: #ff6b6b;
-}
+    display: none;
 
-@media (max-width: 700px) {
+    width: 100%;
 
-    .teams {
-        grid-template-columns: 1fr;
-    }
+    max-width: 1700px;
 
-    .score {
-        font-size: 27px;
-    }
+    padding: 18px;
 
+    border-radius: 14px;
+
+    background:
+        rgba(160,25,25,0.95);
+
+    text-align: center;
+
+    font-size: 20px;
 }
 
 </style>
@@ -327,323 +475,292 @@ body {
 
 <body>
 
-<div class="container">
+<div id="scoreboard">
 
-    <div class="card">
+```
+<div class="header">
 
-        <div class="top">
+    <div>
+        CRICKET LIVE
+    </div>
 
-            <div class="title">
-                CRICKET LIVE SCORE
-            </div>
+    <div class="live">
 
-            <div class="live">
-                ● LIVE
-            </div>
+        <span class="dot"></span>
 
-        </div>
-
-        <div id="content">
-            Loading...
-        </div>
-
-        <div class="footer">
-            Auto refresh: 15 seconds
-        </div>
+        LIVE
 
     </div>
 
 </div>
 
+<div class="content">
+
+    <div
+        id="title"
+        class="title"
+    >
+        Loading live match...
+    </div>
+
+    <div class="teams">
+
+        <div class="team">
+
+            <div
+                id="team1"
+                class="name"
+            >
+                Team 1
+            </div>
+
+            <div
+                id="score1"
+                class="score"
+            >
+                --
+            </div>
+
+            <div
+                id="overs1"
+                class="overs"
+            >
+            </div>
+
+        </div>
+
+        <div class="vs">
+            VS
+        </div>
+
+        <div class="team right">
+
+            <div
+                id="team2"
+                class="name"
+            >
+                Team 2
+            </div>
+
+            <div
+                id="score2"
+                class="score"
+            >
+                --
+            </div>
+
+            <div
+                id="overs2"
+                class="overs"
+            >
+            </div>
+
+        </div>
+
+    </div>
+
+    <div
+        id="status"
+        class="status"
+    >
+        Loading...
+    </div>
+
+</div>
+```
+
+</div>
+
+<div id="error">
+    Unable to load live score
+</div>
+
 <script>
 
-function safe(value) {
+function getTeams(text) {
 
-    var div = document.createElement("div");
-
-    div.textContent = value || "";
-
-    return div.innerHTML;
-
-}
-
-
-function render(match) {
-
-    var scores = match.scores || [];
-
-    var score1 = scores.length > 0
-        ? scores[0].display
-        : "-";
-
-    var score2 = scores.length > 1
-        ? scores[1].display
-        : "-";
-
-    var text = match.text || "";
-
-    var status = match.status || "";
-
-    var parts = text.split(" ");
-
-    var team1 = "Team 1";
-    var team2 = "Team 2";
-
-    if (parts.length >= 4) {
-
-        var scoreIndex = -1;
-
-        for (var i = 0; i < parts.length; i++) {
-
-            if (/^\d+-\d+/.test(parts[i])) {
-                scoreIndex = i;
-                break;
-            }
-
-        }
-
-        if (scoreIndex >= 2) {
-            team1 = parts[scoreIndex - 2] || "Team 1";
-        }
-
-        if (scoreIndex >= 1 && scoreIndex + 1 < parts.length) {
-            team2 = parts[scoreIndex + 1] || "Team 2";
-        }
-
+    if (!text) {
+        return ["Team 1", "Team 2"];
     }
 
-    return (
-        '<div class="match">' +
-        safe(text) +
-        '</div>' +
+    const scorePattern =
+        /\d+\s*-\s*\d+(?:\s*\([\d.]+\))?/g;
 
-        '<div class="teams">' +
+    const parts =
+        text.split(scorePattern);
 
-        '<div class="team">' +
-        '<div class="team-name">' +
-        safe(team1) +
-        '</div>' +
-        '<div class="score">' +
-        safe(score1) +
-        '</div>' +
-        '</div>' +
+    const names = [];
 
-        '<div class="team">' +
-        '<div class="team-name">' +
-        safe(team2) +
-        '</div>' +
-        '<div class="score">' +
-        safe(score2) +
-        '</div>' +
-        '</div>' +
+    for (let i = 0; i < parts.length; i++) {
 
-        '</div>' +
+        let value = parts[i]
+            .replace(/Live Score/gi, "")
+            .replace(/need\s+\d+\s+runs?/gi, "")
+            .replace(/won\s+by.*$/i, "")
+            .replace(/\s+/g, " ")
+            .trim();
 
-        (
-            status
-            ? '<div class="status">' +
-              safe(status) +
-              '</div>'
-            : ''
-        )
-    );
+        if (value.length > 2) {
+            names.push(value);
+        }
+    }
 
+    if (names.length >= 2) {
+
+        return [
+            names[names.length - 2],
+            names[names.length - 1]
+        ];
+    }
+
+    return ["Team 1", "Team 2"];
 }
 
 
-async function updateScore() {
+function showScores(data) {
 
-    var content = document.getElementById("content");
+    const board =
+        document.getElementById("scoreboard");
+
+    const error =
+        document.getElementById("error");
+
+    if (
+        !data ||
+        !data.success ||
+        !data.matches ||
+        data.matches.length === 0
+    ) {
+
+        board.style.display = "none";
+
+        error.style.display = "block";
+
+        return;
+    }
+
+    const match =
+        data.matches[0];
+
+    const scores =
+        match.scores || [];
+
+    const first =
+        scores[0] || {};
+
+    const second =
+        scores[1] || {};
+
+    const teams =
+        getTeams(match.text || "");
+
+    document.getElementById("team1")
+        .textContent = teams[0];
+
+    document.getElementById("team2")
+        .textContent = teams[1];
+
+    document.getElementById("score1")
+        .textContent =
+            first.display || "--";
+
+    document.getElementById("score2")
+        .textContent =
+            second.display || "--";
+
+    document.getElementById("overs1")
+        .textContent =
+            first.overs
+                ? "Overs " + first.overs
+                : "";
+
+    document.getElementById("overs2")
+        .textContent =
+            second.overs
+                ? "Overs " + second.overs
+                : "";
+
+    document.getElementById("title")
+        .textContent =
+            match.text ||
+            "Live Cricket Match";
+
+    document.getElementById("status")
+        .textContent =
+            match.status ||
+            "LIVE";
+
+    board.style.display = "block";
+
+    error.style.display = "none";
+}
+
+
+async function loadScores() {
 
     try {
 
-        var response = await fetch(
-            "/live-scores?t=" + Date.now()
-        );
+        const response =
+            await fetch(
+                "/live-scores?t=" +
+                Date.now(),
+                {
+                    cache: "no-store"
+                }
+            );
 
         if (!response.ok) {
             throw new Error(
-                "HTTP " + response.status
+                "HTTP " +
+                response.status
             );
         }
 
-        var data = await response.json();
+        const data =
+            await response.json();
 
-        if (!data.success) {
-            throw new Error(
-                data.error || "Score request failed"
-            );
-        }
-
-        if (!data.matches || data.matches.length === 0) {
-
-            content.innerHTML =
-                '<div class="status">' +
-                'No live matches found.' +
-                '</div>';
-
-            return;
-        }
-
-        content.innerHTML =
-            render(data.matches[0]);
+        showScores(data);
 
     } catch (error) {
 
-        content.innerHTML =
-            '<div class="error">' +
-            'Unable to load live score.' +
-            '</div>';
+        console.error(
+            "Scoreboard error:",
+            error
+        );
 
-        console.log(error);
+        document.getElementById(
+            "scoreboard"
+        ).style.display = "none";
 
+        document.getElementById(
+            "error"
+        ).style.display = "block";
     }
-
 }
 
 
-updateScore();
+loadScores();
 
 setInterval(
-    updateScore,
+    loadScores,
     15000
 );
 
 </script>
 
 </body>
-</html>
-        """,
-        mimetype="text/html"
-    )
+</html>"""
 
+```
+return Response(
+    html,
+    mimetype="text/html"
+)
+```
 
-@app.route("/debug")
-def debug():
-
-    try:
-
-        html_content = fetch_cricbuzz()
-
-        soup = BeautifulSoup(
-            html_content,
-            "html.parser"
-        )
-
-        for tag in soup(["script", "style", "noscript"]):
-            tag.decompose()
-
-        page_text = clean_text(
-            soup.get_text(" ", strip=True)
-        )
-
-        scores = re.findall(
-            r"\b\d{1,4}-\d{1,2}(?:\s*\(\d{1,2}(?:\.\d)?\))?",
-            page_text
-        )
-
-        return jsonify({
-            "success": True,
-            "status_code": 200,
-            "page_length": len(html_content),
-            "india_found": "India" in html_content,
-            "west_indies_found": "West Indies" in html_content,
-            "score_samples": list(
-                dict.fromkeys(scores)
-            )[:30],
-            "page_preview": page_text[:3000]
-        })
-
-    except requests.RequestException as e:
-
-        return jsonify({
-            "success": False,
-            "error": "Cricbuzz request failed",
-            "details": str(e)
-        }), 502
-
-    except Exception as e:
-
-        return jsonify({
-            "success": False,
-            "error": "Debug error",
-            "details": str(e)
-        }), 500
-
-
-@app.route("/debug-match")
-def debug_match():
-
-    try:
-
-        html_content = fetch_cricbuzz()
-
-        search_terms = [
-            "West Indies tour of India",
-            "West Indies",
-            "India need",
-            "WI",
-            "IND"
-        ]
-
-        position = -1
-        matched_term = None
-
-        for term in search_terms:
-
-            position = html_content.find(term)
-
-            if position != -1:
-                matched_term = term
-                break
-
-        if position == -1:
-
-            return jsonify({
-                "success": False,
-                "message": "Match text not found",
-                "page_length": len(html_content)
-            })
-
-        start = max(
-            0,
-            position - 5000
-        )
-
-        end = min(
-            len(html_content),
-            position + 15000
-        )
-
-        return jsonify({
-            "success": True,
-            "matched_term": matched_term,
-            "position": position,
-            "html_length": len(html_content),
-            "section": html_content[start:end]
-        })
-
-    except requests.RequestException as e:
-
-        return jsonify({
-            "success": False,
-            "error": "Cricbuzz request failed",
-            "details": str(e)
-        }), 502
-
-    except Exception as e:
-
-        return jsonify({
-            "success": False,
-            "error": "Debug error",
-            "details": str(e)
-        }), 500
-
-
-if __name__ == "__main__":
-
-    app.run(
-        host="0.0.0.0",
-        port=10000,
-        debug=False
-    )
+if **name** == "**main**":
+app.run(
+host="0.0.0.0",
+port=10000,
+debug=False
+)

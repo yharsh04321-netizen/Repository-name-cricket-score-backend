@@ -9,7 +9,9 @@ HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/131.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 
@@ -23,13 +25,14 @@ def home():
 
 @app.route("/live")
 def live_scores():
+
     url = "https://www.cricbuzz.com/cricket-match/live-scores"
 
     try:
         response = requests.get(
             url,
             headers=HEADERS,
-            timeout=15
+            timeout=20
         )
 
         response.raise_for_status()
@@ -38,10 +41,18 @@ def live_scores():
 
         matches = []
 
-        # Cricbuzz match cards
-        cards = soup.select("div.cb-mtch-lst")
+        # Try current Cricbuzz cards
+        cards = soup.select("li.cb-match-card")
+
+        # Fallback
+        if not cards:
+            cards = soup.select(".cb-mtch-lst")
+
+        if not cards:
+            cards = soup.select(".cb-schdl")
 
         for card in cards:
+
             text = card.get_text(" ", strip=True)
 
             if not text:
@@ -50,32 +61,83 @@ def live_scores():
             teams = []
             scores = []
 
-            for team in card.select(".cb-hmscg-tm-nm"):
-                name = team.get_text(" ", strip=True)
-                if name:
-                    teams.append(name)
+            # Team names
+            selectors = [
+                ".cb-hmscg-tm-name",
+                ".cb-hmscg-tm-nm"
+            ]
 
-            for score in card.select(".cb-hmscg-tm-sc"):
-                value = score.get_text(" ", strip=True)
-                if value:
-                    scores.append(value)
+            for selector in selectors:
+                for element in card.select(selector):
 
+                    name = element.get_text(" ", strip=True)
+
+                    if name and name not in teams:
+                        teams.append(name)
+
+            # Scores
+            selectors = [
+                ".cb-hmscg-tm-sc",
+                ".cb-ovr-flo"
+            ]
+
+            for selector in selectors:
+                for element in card.select(selector):
+
+                    score = element.get_text(" ", strip=True)
+
+                    if score and score not in scores:
+                        scores.append(score)
+
+            # Match status
             status = ""
 
-            status_element = card.select_one(".cb-text-live")
-            if status_element:
-                status = status_element.get_text(" ", strip=True)
+            for selector in [
+                ".cb-mtch-crd-state",
+                ".cb-text-live",
+                ".cb-text-complete"
+            ]:
 
-            if not status:
-                status_element = card.select_one(".cb-text-complete")
-                if status_element:
-                    status = status_element.get_text(" ", strip=True)
+                element = card.select_one(selector)
 
+                if element:
+
+                    status = element.get_text(
+                        " ",
+                        strip=True
+                    )
+
+                    if status:
+                        break
+
+            # Match link
+            match_url = ""
+
+            link = card.select_one(
+                "a[href*='/live-cricket-scores/']"
+            )
+
+            if link:
+
+                match_url = link.get(
+                    "href",
+                    ""
+                )
+
+                if match_url.startswith("/"):
+                    match_url = (
+                        "https://www.cricbuzz.com"
+                        + match_url
+                    )
+
+            # Add match
             if teams:
+
                 matches.append({
                     "teams": teams,
                     "scores": scores,
                     "status": status,
+                    "url": match_url,
                     "raw": text
                 })
 
@@ -86,6 +148,7 @@ def live_scores():
         })
 
     except Exception as e:
+
         return jsonify({
             "success": False,
             "error": str(e),

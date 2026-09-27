@@ -14,7 +14,7 @@ selected_match = None
 
 def fetch_matches():
     try:
-response = requests.get(
+        response = requests.get(
 CRICBUZZ_URL,
 headers=HEADERS,
 timeout=15

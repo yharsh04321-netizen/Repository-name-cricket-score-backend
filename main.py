@@ -1,101 +1,128 @@
-```python
-from flask import Flask, jsonify, request
-import os
+from flask import Flask, jsonify
 import requests
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-# Render Environment Variable
-API_KEY = os.environ.get("CRICKET_API_KEY")
-
-CURRENT_MATCHES_URL = "https://api.cricapi.com/v1/currentMatches"
+CRICBUZZ_URL = "https://www.cricbuzz.com/cricket-match/live-scores"
 
 
 @app.route("/")
 def home():
     return jsonify({
-        "message": "Cricket Score Backend is running",
-        "status": "online",
-        "provider": "CricketData"
+        "success": True,
+        "message": "Cricket score backend is running",
+        "endpoints": [
+            "/",
+            "/live-scores",
+            "/debug"
+        ]
     })
 
 
-@app.route("/health")
-def health():
-    return jsonify({
-        "status": "ok",
-        "api_key_configured": bool(API_KEY)
-    })
+@app.route("/debug")
+def debug():
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
+        }
 
+        response = requests.get(
+            CRICBUZZ_URL,
+            headers=headers,
+            timeout=20
+        )
 
-@app.route("/live")
-def live_scores():
+        soup = BeautifulSoup(response.text, "html.parser")
 
-    if not API_KEY:
+        return jsonify({
+            "success": True,
+            "status_code": response.status_code,
+            "url": response.url,
+            "content_length": len(response.text),
+            "title": soup.title.get_text(strip=True) if soup.title else None,
+            "html_start": response.text[:1000]
+        })
+
+    except Exception as e:
         return jsonify({
             "success": False,
-            "error": "CRICKET_API_KEY is not configured in Render",
-            "matches": []
+            "error": str(e)
         }), 500
 
+
+@app.route("/live-scores")
+def live_scores():
     try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
+        }
+
         response = requests.get(
-            CURRENT_MATCHES_URL,
-            params={
-                "apikey": API_KEY,
-                "offset": 0
-            },
+            CRICBUZZ_URL,
+            headers=headers,
             timeout=20
         )
 
         response.raise_for_status()
 
-        data = response.json()
-
-        if data.get("status") != "success":
-            return jsonify({
-                "success": False,
-                "error": data.get(
-                    "info",
-                    "CricketData API returned an error"
-                ),
-                "matches": []
-            }), 502
-
-        api_matches = data.get("data", [])
+        soup = BeautifulSoup(response.text, "html.parser")
 
         matches = []
 
-        for match in api_matches:
+        # Cricbuzz live-score cards
+        selectors = [
+            ".cb-mtch-lst",
+            ".cb-col.cb-col-100.cb-scrd-itms",
+            ".cb-col-100.cb-col"
+        ]
 
-            matches.append({
-                "id": match.get("id"),
-                "name": match.get("name"),
-                "matchType": match.get("matchType"),
-                "status": match.get("status"),
-                "venue": match.get("venue"),
-                "date": match.get("date"),
-                "dateTimeGMT": match.get("dateTimeGMT"),
+        cards = []
 
-                "teams": match.get(
-                    "teams",
-                    []
-                ),
+        for selector in selectors:
+            found = soup.select(selector)
+            if found:
+                cards.extend(found)
 
-                "teamInfo": match.get(
-                    "teamInfo",
-                    []
-                ),
+        seen = set()
 
-                "score": match.get(
-                    "score",
-                    []
-                ),
+        for card in cards:
+            text = " ".join(card.stripped_strings)
 
-                "series_id": match.get(
-                    "series_id"
-                )
-            })
+            if not text:
+                continue
+
+            key = text[:250]
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            # Only keep likely cricket match entries
+            cricket_words = [
+                "IND", "AUS", "ENG", "PAK",
+                "SA", "NZ", "WI", "SL",
+                "BAN", "AFG", "IRE", "ZIM",
+                "LIVE", "TOSS", "OVERS"
+            ]
+
+            if any(word in text.upper() for word in cricket_words):
+                matches.append({
+                    "text": text[:500]
+                })
 
         return jsonify({
             "success": True,
@@ -103,131 +130,17 @@ def live_scores():
             "matches": matches
         })
 
-    except requests.exceptions.Timeout:
-
-        return jsonify({
-            "success": False,
-            "error": "CricketData API timed out",
-            "matches": []
-        }), 504
-
-    except requests.exceptions.RequestException as e:
-
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "matches": []
-        }), 502
-
     except Exception as e:
-
         return jsonify({
             "success": False,
-            "error": str(e),
-            "matches": []
-        }), 500
-
-
-@app.route("/live/<match_id>")
-def get_match(match_id):
-
-    if not API_KEY:
-        return jsonify({
-            "success": False,
-            "error": "CRICKET_API_KEY is not configured"
-        }), 500
-
-    try:
-
-        response = requests.get(
-            CURRENT_MATCHES_URL,
-            params={
-                "apikey": API_KEY,
-                "offset": 0
-            },
-            timeout=20
-        )
-
-        response.raise_for_status()
-
-        data = response.json()
-
-        if data.get("status") != "success":
-            return jsonify({
-                "success": False,
-                "error": data.get(
-                    "info",
-                    "API error"
-                )
-            }), 502
-
-        for match in data.get("data", []):
-
-            if str(match.get("id")) == str(match_id):
-
-                return jsonify({
-                    "success": True,
-                    "match": match
-                })
-
-        return jsonify({
-            "success": False,
-            "error": "Match not found"
-        }), 404
-
-    except Exception as e:
-
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
-@app.route("/debug")
-def debug():
-
-    if not API_KEY:
-        return jsonify({
-            "success": False,
-            "error": "CRICKET_API_KEY is missing"
-        }), 500
-
-    try:
-
-        response = requests.get(
-            CURRENT_MATCHES_URL,
-            params={
-                "apikey": API_KEY,
-                "offset": 0
-            },
-            timeout=20
-        )
-
-        return jsonify({
-            "success": response.ok,
-            "http_status": response.status_code,
-            "api_response": response.json()
-        })
-
-    except Exception as e:
-
-        return jsonify({
-            "success": False,
+            "count": 0,
+            "matches": [],
             "error": str(e)
         }), 500
 
 
 if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            10000
-        )
-    )
-
     app.run(
         host="0.0.0.0",
-        port=port
+        port=10000
     )
-```

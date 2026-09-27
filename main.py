@@ -72,6 +72,22 @@ def extract_scores(text):
     return found
 
 
+def parse_score(value):
+    match = re.match(
+        r"^(\d{1,4})-(\d{1,2})(?:\s*\((\d{1,2}(?:\.\d)?)\))?$",
+        value
+    )
+
+    if not match:
+        return None
+
+    return {
+        "runs": int(match.group(1)),
+        "wickets": int(match.group(2)),
+        "overs": match.group(3)
+    }
+
+
 def parse_live_matches(html):
     soup = BeautifulSoup(html, "html.parser")
 
@@ -89,66 +105,106 @@ def parse_live_matches(html):
             lines.append(line)
 
     score_pattern = re.compile(
-        r"\b\d{1,4}[-/]\d{1,2}"
+        r"\b\d{1,4}-\d{1,2}"
         r"(?:\s*\(\d{1,2}(?:\.\d)?\))?"
     )
 
-    status_words = [
-        "Need ",
-        "won by",
-        "Innings Break",
-        "opt to",
-        "Stumps",
-        "LIVE",
-        "Match abandoned",
-        "Toss delayed"
+    status_patterns = [
+        r"need\s+\d+\s+runs?",
+        r"won\s+by\s+[^|]+",
+        r"innings\s+break",
+        r"opt\s+to\s+(?:bat|bowl)",
+        r"stumps",
+        r"live",
+        r"match\s+abandoned",
+        r"toss\s+delayed[^|]*"
     ]
 
-    results = []
+    matches = []
     seen = set()
 
     for i, line in enumerate(lines):
 
-        has_score = bool(score_pattern.search(line))
-
-        has_status = any(
-            word.lower() in line.lower()
-            for word in status_words
-        )
-
-        if not has_score and not has_status:
+        if not score_pattern.search(line):
             continue
 
-        start = max(0, i - 4)
-        end = min(len(lines), i + 5)
+        start = max(0, i - 3)
+        end = min(len(lines), i + 4)
 
         context = clean_text(
             " ".join(lines[start:end])
         )
 
-        if len(context) > 1000:
-            context = context[:1000]
+        if len(context) > 1200:
+            context = context[:1200]
 
-        scores = score_pattern.findall(context)
+        scores = list(dict.fromkeys(
+            score_pattern.findall(context)
+        ))
 
-        key = context.lower()
+        if not scores:
+            continue
+
+        parsed_scores = []
+
+        for score in scores:
+            parsed = parse_score(score)
+
+            if parsed:
+                parsed_scores.append({
+                    "display": score,
+                    **parsed
+                })
+
+        status = ""
+
+        for pattern in status_patterns:
+            status_match = re.search(
+                pattern,
+                context,
+                re.IGNORECASE
+            )
+
+            if status_match:
+                status = clean_text(
+                    status_match.group(0)
+                )
+                break
+
+        normalized = re.sub(
+            r"\bLive Score\s*\|?\s*Scorecard.*$",
+            "",
+            context,
+            flags=re.IGNORECASE
+        )
+
+        normalized = clean_text(normalized)
+
+        key = (
+            tuple(
+                x["display"]
+                for x in parsed_scores
+            ),
+            status.lower(),
+            normalized[:250].lower()
+        )
 
         if key in seen:
             continue
 
         seen.add(key)
 
-        results.append({
+        matches.append({
             "text": context,
-            "scores": list(dict.fromkeys(scores))
+            "scores": parsed_scores,
+            "status": status
         })
 
-    return results
+    return matches
 
 
 @app.route("/live-scores")
 def live_scores():
-
     try:
         html = fetch_cricbuzz()
         matches = parse_live_matches(html)
@@ -162,7 +218,6 @@ def live_scores():
         })
 
     except requests.RequestException as e:
-
         return jsonify({
             "success": False,
             "count": 0,
@@ -172,7 +227,6 @@ def live_scores():
         }), 502
 
     except Exception as e:
-
         return jsonify({
             "success": False,
             "count": 0,
@@ -184,7 +238,6 @@ def live_scores():
 
 @app.route("/debug")
 def debug():
-
     try:
         html = fetch_cricbuzz()
 
@@ -208,7 +261,6 @@ def debug():
         })
 
     except requests.RequestException as e:
-
         return jsonify({
             "success": False,
             "error": "Cricbuzz request failed",
@@ -216,7 +268,6 @@ def debug():
         }), 502
 
     except Exception as e:
-
         return jsonify({
             "success": False,
             "error": str(e)
@@ -225,7 +276,6 @@ def debug():
 
 @app.route("/debug-match")
 def debug_match():
-
     try:
         html = fetch_cricbuzz()
 
@@ -241,7 +291,6 @@ def debug_match():
         matched_term = None
 
         for term in search_terms:
-
             position = html.find(term)
 
             if position != -1:
@@ -249,7 +298,6 @@ def debug_match():
                 break
 
         if position == -1:
-
             return jsonify({
                 "success": False,
                 "message": "Match text not found",
@@ -268,7 +316,6 @@ def debug_match():
         })
 
     except requests.RequestException as e:
-
         return jsonify({
             "success": False,
             "error": "Cricbuzz request failed",
@@ -276,7 +323,6 @@ def debug_match():
         }), 502
 
     except Exception as e:
-
         return jsonify({
             "success": False,
             "error": str(e)

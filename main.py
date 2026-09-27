@@ -23,10 +23,6 @@ HEADERS = {
 }
 
 
-# =========================================================
-# HOME
-# =========================================================
-
 @app.route("/")
 def home():
     return jsonify({
@@ -41,10 +37,6 @@ def home():
     })
 
 
-# =========================================================
-# FETCH CRICBUZZ
-# =========================================================
-
 def fetch_cricbuzz():
     response = requests.get(
         CRICBUZZ_URL,
@@ -53,21 +45,12 @@ def fetch_cricbuzz():
     )
 
     response.raise_for_status()
-
     return response.text
 
-
-# =========================================================
-# CLEAN TEXT
-# =========================================================
 
 def clean_text(text):
     return re.sub(r"\s+", " ", text).strip()
 
-
-# =========================================================
-# EXTRACT SCORES
-# =========================================================
 
 def extract_scores(text):
     patterns = [
@@ -80,9 +63,7 @@ def extract_scores(text):
     found = []
 
     for pattern in patterns:
-        matches = re.findall(pattern, text)
-
-        for value in matches:
+        for value in re.findall(pattern, text):
             value = clean_text(value)
 
             if value not in found:
@@ -90,10 +71,6 @@ def extract_scores(text):
 
     return found
 
-
-# =========================================================
-# PARSE LIVE MATCHES
-# =========================================================
 
 def parse_live_matches(html):
     soup = BeautifulSoup(html, "html.parser")
@@ -132,9 +109,7 @@ def parse_live_matches(html):
 
     for i, line in enumerate(lines):
 
-        has_score = bool(
-            score_pattern.search(line)
-        )
+        has_score = bool(score_pattern.search(line))
 
         has_status = any(
             word.lower() in line.lower()
@@ -171,16 +146,11 @@ def parse_live_matches(html):
     return results
 
 
-# =========================================================
-# LIVE SCORES
-# =========================================================
-
 @app.route("/live-scores")
 def live_scores():
 
     try:
         html = fetch_cricbuzz()
-
         matches = parse_live_matches(html)
 
         return jsonify({
@@ -211,10 +181,6 @@ def live_scores():
             "details": str(e)
         }), 500
 
-
-# =========================================================
-# DEBUG
-# =========================================================
 
 @app.route("/debug")
 def debug():
@@ -257,10 +223,6 @@ def debug():
         }), 500
 
 
-# =========================================================
-# DEBUG MATCH
-# =========================================================
-
 @app.route("/debug-match")
 def debug_match():
 
@@ -294,15 +256,8 @@ def debug_match():
                 "page_length": len(html)
             })
 
-        start = max(
-            0,
-            position - 5000
-        )
-
-        end = min(
-            len(html),
-            position + 15000
-        )
+        start = max(0, position - 5000)
+        end = min(len(html), position + 15000)
 
         return jsonify({
             "success": True,
@@ -327,10 +282,6 @@ def debug_match():
             "error": str(e)
         }), 500
 
-
-# =========================================================
-# LOCAL / RENDER START
-# =========================================================
 
 if __name__ == "__main__":
     app.run(

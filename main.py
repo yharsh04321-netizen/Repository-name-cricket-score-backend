@@ -1,3 +1,4 @@
+```python
 from flask import Flask, jsonify, Response
 import requests
 from bs4 import BeautifulSoup
@@ -44,7 +45,6 @@ def fetch_cricbuzz():
         headers=HEADERS,
         timeout=20
     )
-
     response.raise_for_status()
     return response.text
 
@@ -142,9 +142,6 @@ def parse_live_matches(html):
             score_pattern.findall(context)
         ))
 
-        if not scores:
-            continue
-
         parsed_scores = []
 
         for score in scores:
@@ -155,6 +152,9 @@ def parse_live_matches(html):
                     "display": score,
                     **parsed
                 })
+
+        if not parsed_scores:
+            continue
 
         status = ""
 
@@ -239,15 +239,173 @@ def live_scores():
 @app.route("/scoreboard")
 def scoreboard():
 
-    html = (
-        "<!DOCTYPE html>"
-        "<html>"
-        "<head>"
-        "<meta charset='UTF-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1.0'>"
-        "<title>Cricket Live Score</title>"
+    html = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
 
-        "<style>"
-        "*{box-sizing:border-box}"
-        "html,body{"
-        "margin:
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+#scoreboard {
+    position: fixed;
+    left: 30px;
+    bottom: 30px;
+    width: 720px;
+}
+
+.header {
+    background: rgba(10, 10, 10, 0.96);
+    color: white;
+    padding: 14px 20px;
+    border-radius: 12px 12px 0 0;
+    font-size: 22px;
+    font-weight: bold;
+}
+
+.live {
+    color: #ff3333;
+    font-size: 14px;
+    margin-left: 10px;
+}
+
+.match {
+    background: rgba(15, 15, 15, 0.94);
+    color: white;
+    border-left: 5px solid #00d084;
+    padding: 14px 20px;
+    margin-top: 2px;
+}
+
+.title {
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.score {
+    font-size: 27px;
+    font-weight: bold;
+}
+
+.status {
+    color: #00d084;
+    font-size: 16px;
+    margin-top: 6px;
+}
+
+.empty {
+    background: rgba(15, 15, 15, 0.94);
+    color: white;
+    padding: 20px;
+    font-size: 18px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="scoreboard">
+
+    <div class="header">
+        CRICKET LIVE SCORE
+        <span class="live">● LIVE</span>
+    </div>
+
+    <div id="matches">
+        <div class="empty">
+            Loading live scores...
+        </div>
+    </div>
+
+</div>
+
+<script>
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+
+async function loadScores() {
+
+    try {
+
+        const response = await fetch(
+            "/live-scores?t=" + Date.now()
+        );
+
+        const data = await response.json();
+
+        const container =
+            document.getElementById("matches");
+
+        if (
+            !data.success ||
+            !data.matches ||
+            data.matches.length === 0
+        ) {
+
+            container.innerHTML =
+                '<div class="empty">' +
+                'No live matches available' +
+                '</div>';
+
+            return;
+        }
+
+        const matches =
+            data.matches.slice(0, 6);
+
+        container.innerHTML =
+            matches.map(function(match) {
+
+                let scores = "";
+
+                if (
+                    match.scores &&
+                    match.scores.length
+                ) {
+
+                    scores = match.scores.map(
+                        function(score) {
+
+                            return escapeHtml(
+                                score.display
+                            );
+
+                        }
+                    ).join(" &nbsp; | &nbsp; ");
+                }
+
+                let title =
+                    match.text || "Live Match";
+
+                title = title.replace(
+                    /Live Score.*$/i,
+                    ""
+                );
+
+                title = title.replace(
+                    /Scorecard.*$/i,
+                    ""
+                );
+
+                let status =
+                    match.status || "";
+
+```

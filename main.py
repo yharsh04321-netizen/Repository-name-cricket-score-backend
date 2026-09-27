@@ -2,22 +2,16 @@ from flask import Flask, jsonify, Response
 import requests
 from bs4 import BeautifulSoup
 import re
-import json
-import time
 
-app = Flask(**name**)
+app = Flask(__name__)
 
 CRICBUZZ_URL = "https://www.cricbuzz.com/cricket-match/live-scores"
 
 HEADERS = {
-"User-Agent": (
-"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-"AppleWebKit/537.36 (KHTML, like Gecko) "
-"Chrome/131.0.0.0 Safari/537.36"
-)
+"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
 }
 
-def fetch_live_scores():
+def get_live_scores():
 try:
 response = requests.get(
 CRICBUZZ_URL,
@@ -35,21 +29,15 @@ timeout=15
     for item in soup.select(".cb-mtch-lst"):
         text = " ".join(item.stripped_strings)
 
-        if not text:
-            continue
-
-        matches.append({
-            "text": text
-        })
+        if text:
+            matches.append(text)
 
     if not matches:
         for item in soup.select(".cb-mtch-lst-v1"):
             text = " ".join(item.stripped_strings)
 
             if text:
-                matches.append({
-                    "text": text
-                })
+                matches.append(text)
 
     return {
         "success": True,
@@ -58,65 +46,21 @@ timeout=15
         "source": "Cricbuzz"
     }
 
-except requests.RequestException as exc:
+except requests.RequestException as error:
     return {
         "success": False,
         "matches": [],
         "count": 0,
-        "error": f"Network error: {str(exc)}",
-        "source": "Cricbuzz"
+        "error": "Network error: " + str(error)
     }
 
-except Exception as exc:
+except Exception as error:
     return {
         "success": False,
         "matches": [],
         "count": 0,
-        "error": str(exc),
-        "source": "Cricbuzz"
+        "error": str(error)
     }
-```
-
-def parse_score(text):
-if not text:
-return {
-"team1": "",
-"team2": "",
-"score1": "",
-"score2": "",
-"status": ""
-}
-
-```
-score_patterns = re.findall(
-    r"\b\d{1,4}/\d{1,3}(?:\s*\(\d+(?:\.\d+)?\))?",
-    text
-)
-
-status = ""
-
-lower = text.lower()
-
-if "won" in lower:
-    status = text
-elif "live" in lower:
-    status = "LIVE"
-elif "stumps" in lower:
-    status = "STUMPS"
-elif "innings break" in lower:
-    status = "INNINGS BREAK"
-elif "break" in lower:
-    status = "BREAK"
-elif "scheduled" in lower:
-    status = "SCHEDULED"
-
-return {
-    "team1": "",
-    "team2": "",
-    "score1": score_patterns[0] if len(score_patterns) > 0 else "",
-    "score2": score_patterns[1] if len(score_patterns) > 1 else "",
-    "status": status
-}
 ```
 
 @app.route("/")
@@ -135,25 +79,24 @@ return jsonify({
 
 @app.route("/live-scores")
 def live_scores():
-data = fetch_live_scores()
-return jsonify(data)
+return jsonify(get_live_scores())
 
 @app.route("/debug")
 def debug():
-data = fetch_live_scores()
+data = get_live_scores()
 
 ```
 return jsonify({
-    "success": data.get("success", False),
-    "count": data.get("count", 0),
-    "error": data.get("error"),
-    "matches": data.get("matches", [])
+    "success": data.get("success"),
+    "count": data.get("count"),
+    "matches": data.get("matches"),
+    "error": data.get("error")
 })
 ```
 
 @app.route("/debug-match")
 def debug_match():
-data = fetch_live_scores()
+data = get_live_scores()
 
 ```
 if not data.get("matches"):
@@ -163,29 +106,38 @@ if not data.get("matches"):
         "data": data
     })
 
-first_match = data["matches"][0]
+text = data["matches"][0]
+
+scores = re.findall(
+    r"\b\d{1,4}/\d{1,3}(?:\s*\(\d+(?:\.\d+)?\))?",
+    text
+)
 
 return jsonify({
     "success": True,
-    "raw": first_match,
-    "parsed": parse_score(first_match.get("text", ""))
+    "raw": text,
+    "scores": scores
 })
 ```
 
 @app.route("/scoreboard")
 def scoreboard():
+
+```
 html = """
+```
 
 <!DOCTYPE html>
 
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Cricket Scoreboard</title>
+<title>Cricket Live Score</title>
 
 <style>
+
 html,
 body {
     margin: 0;
@@ -199,17 +151,18 @@ body {
 
 body {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
 }
 
 .scoreboard {
     width: 96%;
     max-width: 1100px;
-    min-height: 110px;
+    margin-top: 20px;
     box-sizing: border-box;
 
-    background: rgba(10, 15, 25, 0.92);
+    background: rgba(8, 12, 20, 0.92);
+
     border: 2px solid rgba(255, 255, 255, 0.18);
     border-radius: 14px;
 
@@ -221,7 +174,7 @@ body {
     overflow: hidden;
 }
 
-.header {
+.top {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -242,37 +195,37 @@ body {
     color: #ff5252;
 }
 
-.live-dot {
+.dot {
     width: 8px;
     height: 8px;
+
     border-radius: 50%;
+
     background: #ff3b30;
 
     box-shadow: 0 0 10px #ff3b30;
 }
 
-.content {
-    padding: 18px 22px;
-}
+.score {
+    padding: 20px;
 
-.match-text {
+    text-align: center;
+
     font-size: 24px;
-    line-height: 1.35;
-    font-weight: 700;
-    text-align: center;
+    font-weight: bold;
+
+    line-height: 1.4;
 }
 
-.empty {
+.loading {
     color: rgba(255, 255, 255, 0.65);
-    text-align: center;
-    font-size: 20px;
 }
 
 .error {
     color: #ff8a80;
-    text-align: center;
-    font-size: 16px;
+    font-size: 17px;
 }
+
 </style>
 
 </head>
@@ -282,32 +235,43 @@ body {
 <div class="scoreboard">
 
 ```
-<div class="header">
-    <div>CRICKET LIVE SCORE</div>
+<div class="top">
+
+    <div>
+        CRICKET LIVE SCORE
+    </div>
 
     <div class="live">
-        <span class="live-dot"></span>
+        <span class="dot"></span>
         LIVE
     </div>
+
 </div>
 
-<div class="content">
-    <div id="score" class="empty">
-        Loading live score...
-    </div>
+<div
+    id="score"
+    class="score loading"
+>
+    Loading live score...
 </div>
 ```
 
 </div>
 
 <script>
-async function loadScore() {
-    const scoreElement = document.getElementById("score");
+
+async function updateScore() {
+
+    const element = document.getElementById("score");
 
     try {
-        const response = await fetch("/live-scores", {
-            cache: "no-store"
-        });
+
+        const response = await fetch(
+            "/live-scores?time=" + Date.now(),
+            {
+                cache: "no-store"
+            }
+        );
 
         if (!response.ok) {
             throw new Error("HTTP " + response.status);
@@ -316,37 +280,49 @@ async function loadScore() {
         const data = await response.json();
 
         if (!data.success) {
-            scoreElement.className = "error";
-            scoreElement.textContent =
+
+            element.className = "score error";
+
+            element.textContent =
                 data.error || "Unable to load live score";
+
             return;
         }
 
         if (!data.matches || data.matches.length === 0) {
-            scoreElement.className = "empty";
-            scoreElement.textContent =
+
+            element.className = "score loading";
+
+            element.textContent =
                 "No live match currently available";
+
             return;
         }
 
-        scoreElement.className = "match-text";
+        element.className = "score";
 
-        const match = data.matches[0];
-
-        scoreElement.textContent =
-            match.text || "Live score unavailable";
+        element.textContent =
+            data.matches[0];
 
     } catch (error) {
-        scoreElement.className = "error";
 
-        scoreElement.textContent =
-            "Unable to fetch live score";
+        element.className = "score error";
+
+        element.textContent =
+            "Live score temporarily unavailable";
+
     }
+
 }
 
-loadScore();
 
-setInterval(loadScore, 15000);
+updateScore();
+
+setInterval(
+    updateScore,
+    15000
+);
+
 </script>
 
 </body>

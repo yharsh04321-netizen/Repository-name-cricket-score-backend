@@ -245,7 +245,7 @@ def fetch_match_detail(match):
 
     status_patterns = [
         r"Match abandoned without toss", r"Match abandoned", r"Innings Break",
-        r"Day\s+\d+\s*:\s*Stumps[^|]*", r"[A-Za-z ]+ won by \d+ runs",
+        r"Day\s+\d+\s*:\s*Stumps\s*[-:]\s*[^|]{0,120}", r"[A-Za-z ]+ won by \d+ runs",
         r"[A-Za-z ]+ won by \d+ wickets"
     ]
     for pat in status_patterns:

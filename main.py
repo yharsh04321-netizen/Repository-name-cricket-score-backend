@@ -64,7 +64,15 @@ def fetch_matches():
     return matches
 
 def get_match_by_id(match_id):
-    return next((m for m in fetch_matches() if str(m["id"]) == str(match_id)), None)
+    found = next((m for m in fetch_matches() if str(m["id"]) == str(match_id)), None)
+    if found:
+        return found
+    # Keep an old/previously selected numeric match ID usable even if it is no longer
+    # present in the current live-score listing. The detail page can still resolve it.
+    mid = clean(match_id)
+    if mid.isdigit():
+        return {"id":mid,"name":f"Match {mid}","url":f"https://www.cricbuzz.com/live-cricket-scores/{mid}"}
+    return None
 
 def parse_scores(text):
     patterns = [
@@ -98,13 +106,27 @@ def fetch_match_detail(match):
     team1,team2=extract_teams(match["name"])
     result={"title":match["name"],"url":match["url"],"team1":team1,"team2":team2,"team1_code":team_code(team1),"team2_code":team_code(team2),"team1_flag":team_flag(team1),"team2_flag":team_flag(team2),"team1_score":"-","team2_score":"-","team1_overs":"","team2_overs":"","crr":"-","partnership":"-","status":"WAITING FOR LIVE DATA","batsmen":[],"bowler":None}
     text=""
+    page_title=""
     try:
         r=requests.get(match["url"],headers=HEADERS,timeout=9); r.raise_for_status()
-        soup=BeautifulSoup(r.text,"html.parser"); text=clean(soup.get_text(" ",strip=True))
+        soup=BeautifulSoup(r.text,"html.parser")
+        text=clean(soup.get_text(" ",strip=True))
+        if soup.title:
+            page_title=clean(soup.title.get_text(" ",strip=True))
+        if page_title and (match["name"].startswith("Match ") or team1=="TEAM 1"):
+            p1,p2=extract_teams(page_title)
+            if p1!="TEAM 1":
+                team1,team2=p1,p2
+                result.update({"title":page_title,"team1":team1,"team2":team2,"team1_code":team_code(team1),"team2_code":team_code(team2),"team1_flag":team_flag(team1),"team2_flag":team_flag(team2)})
     except Exception as e: print("direct detail error:",e)
     if not re.search(r"\b[A-Z]{2,6}\s+\d{1,4}\s*(?:/|-)\s*\d+\s*\(",text[:12000]):
         try:
             r=requests.get(jina_url(match["url"]),headers={"User-Agent":HEADERS["User-Agent"]},timeout=10); r.raise_for_status(); text=clean(r.text)
+            if (match["name"].startswith("Match ") or team1=="TEAM 1"):
+                p1,p2=extract_teams(text)
+                if p1!="TEAM 1":
+                    team1,team2=p1,p2
+                    result.update({"title":clean(text[:160]),"team1":team1,"team2":team2,"team1_code":team_code(team1),"team2_code":team_code(team2),"team1_flag":team_flag(team1),"team2_flag":team_flag(team2)})
         except Exception as e: print("jina detail error:",e)
     scores=parse_scores(text)
     if scores: result["team1_score"]=f"{scores[0]['runs']}-{scores[0]['wickets']}"; result["team1_overs"]=scores[0]["overs"]

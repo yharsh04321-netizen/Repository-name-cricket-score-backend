@@ -25,20 +25,16 @@ FLAGS = {
     "bermuda":"🇧🇲","cayman islands":"🇰🇾","nigeria":"🇳🇬","sierra leone":"🇸🇱"
 }
 
-
 def clean(v):
     return " ".join(str(v or "").split()).strip()
-
 
 def absolute_url(url):
     if not url:
         return ""
     return url if url.startswith("http") else "https://www.cricbuzz.com" + url
 
-
 def jina_url(url):
     return "https://r.jina.ai/http://" + url.removeprefix("https://").removeprefix("http://")
-
 
 def team_flag(name):
     low = clean(name).lower()
@@ -46,7 +42,6 @@ def team_flag(name):
         if key in low:
             return flag
     return "🏳️"
-
 
 def team_code(name):
     n = clean(name).upper()
@@ -60,12 +55,10 @@ def team_code(name):
     }
     return codes.get(n, "".join(x[0] for x in n.split()[:3])[:5] or "T1")
 
-
 def extract_teams(title):
     title = clean(title)
     m = re.search(r"(.+?)\s+vs\s+(.+?)(?:\s+-\s+|,\s*|$)", title, re.I)
     return (clean(m.group(1)), clean(m.group(2))) if m else ("TEAM 1", "TEAM 2")
-
 
 def compact_match_name(text, url):
     text = clean(text)
@@ -78,16 +71,13 @@ def compact_match_name(text, url):
             return name + (" - " + clean(status.group(1)) if status else "")
     return text[:250]
 
-
 def is_current_card(anchor):
     text = clean(anchor.get_text(" ", strip=True))
     markers = r"match abandoned|abandoned|innings break|day\s+\d+\s*:\s*stumps|won by|match tied|no result|live|\d{1,4}\s*-\s*\d{1,2}\s*\(" 
     return bool(re.search(markers, text, re.I))
 
-
 def fetch_matches():
     matches, seen = [], set()
-
     def add(a):
         url = absolute_url(a.get("href", ""))
         m = re.search(r"/live-cricket-scores/(\d+)", url)
@@ -99,7 +89,6 @@ def fetch_matches():
         seen.add(mid)
         text = clean(a.get_text(" ", strip=True))
         matches.append({"id": mid, "name": compact_match_name(text, url), "url": url})
-
     for source in (CRICBUZZ_URL, jina_url(CRICBUZZ_URL)):
         try:
             r = requests.get(source, headers=HEADERS, timeout=15)
@@ -113,7 +102,6 @@ def fetch_matches():
             print("match list error:", e)
     return matches
 
-
 def get_match_by_id(match_id):
     mid = clean(match_id)
     if not mid.isdigit():
@@ -121,16 +109,12 @@ def get_match_by_id(match_id):
     found = next((m for m in fetch_matches() if str(m["id"]) == mid), None)
     if found:
         return found
-    # Keep an explicitly selected numeric Cricbuzz match usable even when the live-list
-    # page temporarily omits the card.
     return {"id": mid, "name": f"Match {mid}", "url": f"https://www.cricbuzz.com/live-cricket-scores/{mid}"}
-
 
 def scorecard_url(url):
     if "/live-cricket-scores/" in url:
         return url.replace("/live-cricket-scores/", "/live-cricket-scorecard/", 1)
     return url
-
 
 def parse_scores(text):
     text = clean(text)
@@ -146,7 +130,6 @@ def parse_scores(text):
             if item not in found:
                 found.append(item)
     return found[:4]
-
 
 def parse_players(text):
     section = clean(text[-16000:])
@@ -167,13 +150,29 @@ def parse_players(text):
                 break
         if len(bats) == 2:
             break
-
     bowler = None
     m = re.search(r"\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s+(\d+(?:\.\d+)?)\s+(\d+)\s+(\d+)\s+(\d+)\s+([0-9.]+)", section)
     if m:
         bowler = {"name":clean(m.group(1)).replace(" *", ""), "overs":m.group(2), "maidens":m.group(3), "runs":m.group(4), "wickets":m.group(5), "economy":m.group(6)}
     return bats, bowler
 
+def parse_captains(text):
+    """Find players explicitly marked captain on the source page."""
+    section = clean(text[-20000:])
+    found = []
+    patterns = [
+        r"\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s*\(c\)",
+        r"\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s*\(C\)",
+        r"\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s+captain\b"
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, section):
+            name = clean(m.group(1)).replace(" *", "")
+            if name and name not in found and len(name.split()) <= 4:
+                found.append(name)
+            if len(found) >= 2:
+                return found[:2]
+    return found[:2]
 
 def fetch_match_detail(match):
     match_id = str(match["id"])
@@ -181,7 +180,6 @@ def fetch_match_detail(match):
     cached = detail_cache.get(match_id)
     if cached and now - cached["time"] < CACHE_SECONDS:
         return cached["data"]
-
     team1, team2 = extract_teams(match.get("name", ""))
     result = {
         "title": match.get("name", "CRICKET"), "url": match.get("url", ""),
@@ -190,15 +188,13 @@ def fetch_match_detail(match):
         "team1_flag": team_flag(team1), "team2_flag": team_flag(team2),
         "team1_score":"-", "team2_score":"-", "team1_overs":"", "team2_overs":"",
         "crr":"-", "partnership":"-", "status":"LIVE DATA TEMPORARILY UNAVAILABLE",
-        "batsmen":[], "bowler":None
+        "batsmen":[], "bowler":None, "captains":[]
     }
-
     urls = []
     original = match.get("url", "")
     card_url = scorecard_url(original)
     if card_url: urls.append(card_url)
     if original and original not in urls: urls.append(original)
-
     texts = []
     for url in urls:
         try:
@@ -217,7 +213,6 @@ def fetch_match_detail(match):
                 break
         except Exception as e:
             print("direct detail error:", e)
-
     if not texts:
         for url in urls:
             try:
@@ -228,7 +223,6 @@ def fetch_match_detail(match):
                     break
             except Exception as e:
                 print("jina detail error:", e)
-
     text = max(texts, key=len) if texts else ""
     scores = parse_scores(text)
     if scores:
@@ -237,12 +231,10 @@ def fetch_match_detail(match):
     if len(scores) > 1:
         result["team2_score"] = f"{scores[1]['runs']}-{scores[1]['wickets']}"
         result["team2_overs"] = scores[1]["overs"]
-
     m = re.search(r"\bCRR\s*[: ]\s*([0-9]+(?:\.[0-9]+)?)", text, re.I)
     if m: result["crr"] = m.group(1)
     m = re.search(r"P['’]?SHIP\s*[: ]\s*([0-9]+(?:\([0-9.]+\))?)", text, re.I)
     if m: result["partnership"] = m.group(1)
-
     status_patterns = [
         r"Match abandoned without toss", r"Match abandoned", r"Innings Break",
         r"Day\s+\d+\s*:\s*Stumps\s*[-:]\s*[^|]{0,120}", r"[A-Za-z ]+ won by \d+ runs",
@@ -256,22 +248,19 @@ def fetch_match_detail(match):
     else:
         if scores:
             result["status"] = "LIVE"
-
     result["batsmen"], result["bowler"] = parse_players(text)
+    result["captains"] = parse_captains(text)
     detail_cache[match_id] = {"time":now, "data":result}
     return result
-
 
 @app.route("/")
 def home():
     return jsonify({"service":"Cricket Live Score Backend", "status":"online", "success":True})
 
-
 @app.route("/live-scores")
 def live_scores():
     matches = fetch_matches()
     return jsonify({"success":True, "count":len(matches), "matches":matches})
-
 
 @app.route("/select-match", methods=["GET","POST"])
 def select_match():
@@ -292,13 +281,11 @@ def select_match():
     html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Select Match</title><style>body{{margin:0;background:#101010;color:#fff;font-family:Arial}}.container{{max-width:900px;margin:30px auto;padding:20px}}.match{{background:#1d1d1d;border:1px solid #333;border-radius:12px;padding:20px;margin-bottom:15px}}.live{{color:#00e676;font-size:13px;font-weight:bold;margin-bottom:10px}}.name{{font-size:19px;font-weight:bold;margin-bottom:18px}}button,a{{background:#00c853;color:#fff;border:0;border-radius:7px;padding:12px 20px;font-weight:bold;text-decoration:none;display:inline-block}}.refresh{{background:#333;margin-bottom:20px}}.selected{{background:#12351f;border:1px solid #00c853;border-radius:10px;padding:20px;margin-bottom:20px}}.empty{{background:#1d1d1d;padding:30px;text-align:center;color:#aaa;border-radius:10px}}code{{background:#000;padding:5px 8px;border-radius:5px}}</style></head><body><div class="container"><h1>🏏 CRICKET LIVE SCORE</h1><p>Today's current cricket matches for your OBS scoreboard.</p>{selected_html}<button class="refresh" onclick="location.href='/select-match'">↻ REFRESH MATCHES</button>{cards}</div></body></html>'''
     return Response(html, mimetype="text/html")
 
-
 @app.route("/selected-match")
 def selected_match_api():
     mid = request.args.get("match_id", "")
     m = get_match_by_id(mid) if mid else None
     return jsonify({"success":True, "selected":bool(m), "match":m})
-
 
 @app.route("/selected-score")
 def selected_score():
@@ -311,23 +298,23 @@ def selected_score():
         return jsonify({"success":True, "selected":True, "match":data})
     except Exception as e:
         print("selected score error:", repr(e))
-        # Never break the scoreboard endpoint. Return a valid payload even if Cricbuzz
-        # temporarily blocks a request.
         t1, t2 = extract_teams(m.get("name", ""))
-        fallback = {"title":m.get("name","CRICKET"),"team1":t1,"team2":t2,"team1_code":team_code(t1),"team2_code":team_code(t2),"team1_flag":team_flag(t1),"team2_flag":team_flag(t2),"team1_score":"-","team2_score":"-","team1_overs":"","team2_overs":"","crr":"-","partnership":"-","status":"DATA RETRYING","batsmen":[],"bowler":None}
+        fallback = {"title":m.get("name","CRICKET"),"team1":t1,"team2":t2,"team1_code":team_code(t1),"team2_code":team_code(t2),"team1_flag":team_flag(t1),"team2_flag":team_flag(t2),"team1_score":"-","team2_score":"-","team1_overs":"","team2_overs":"","crr":"-","partnership":"-","status":"DATA RETRYING","batsmen":[],"bowler":None,"captains":[]}
         return jsonify({"success":True,"selected":True,"match":fallback})
-
 
 @app.route("/scoreboard")
 def scoreboard():
     mid = request.args.get("match_id", "")
     if not mid:
         return Response("<html><body style='font-family:Arial;padding:30px'>Select a match first. Open <a href='/select-match'>Match Selector</a>.</body></html>", mimetype="text/html")
-
     mid_js = json.dumps(str(mid))
-    html = '''<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OBS Cricket Scoreboard</title><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:transparent!important;overflow:hidden;font-family:Arial;color:#fff}#board{position:absolute;left:2%;right:2%;bottom:2%;background:rgba(5,7,10,.95);border:2px solid rgba(255,255,255,.16);border-radius:22px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.45)}.top{display:grid;grid-template-columns:1fr 1.25fr 1fr;min-height:170px;background:linear-gradient(90deg,#0b4e83,#111827,#8b1720)}.team{display:flex;align-items:center;gap:18px;padding:22px 28px}.right{justify-content:flex-end;text-align:right}.badge{width:82px;height:82px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;background:#eee;color:#111;border:4px solid #fff;flex:none}.team-name{font-size:25px;font-weight:900;text-transform:uppercase}.team-score{font-size:52px;font-weight:900;color:#ffd400}.team-over{font-size:19px;font-weight:800}.center{text-align:center;padding:25px 12px}.status{font-size:23px;font-weight:900;background:#b20f1b;border-radius:14px;padding:12px 16px;display:inline-block}.substatus{margin-top:14px;font-size:19px;color:#ffd400;font-weight:800}.info{display:flex;justify-content:space-around;background:linear-gradient(90deg,#9a121d,#d71920,#9a121d);padding:12px;font-size:20px;font-weight:900}.cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px;background:#000}.card{min-height:125px;padding:18px;background:linear-gradient(135deg,#12639a,#183e67);text-align:center}.red{background:linear-gradient(135deg,#a71925,#68131b)}.label{font-size:14px;font-weight:900}.player{font-size:23px;font-weight:900;margin-top:10px}.player-score{font-size:29px;font-weight:900;color:#ffd400;margin-top:5px}.small{font-size:14px;font-weight:800;margin-top:5px}.footer{display:flex;justify-content:space-between;background:#070707;padding:10px 18px;font-size:14px;font-weight:800}@media(max-width:800px){.top{grid-template-columns:1fr 1fr}.center{grid-column:1/3;order:-1}.team{padding:12px}.team-name{font-size:18px}.team-score{font-size:35px}.badge{width:58px;height:58px;font-size:20px}.info{font-size:14px}.player{font-size:18px}}</style></head><body><div id="board"><div class="top"><div class="team"><div class="badge" id="badge1">🏳️</div><div><div class="team-name" id="team1">TEAM 1</div><div class="team-score" id="score1">-</div><div class="team-over" id="over1"></div></div></div><div class="center"><div class="status" id="status">WAITING</div><div class="substatus" id="title">CRICKET</div></div><div class="team right"><div><div class="team-name" id="team2">TEAM 2</div><div class="team-score" id="score2">-</div><div class="team-over" id="over2"></div></div><div class="badge" id="badge2">🏳️</div></div></div><div class="info"><div>CRR: <span id="crr">-</span></div><div>P'SHIP: <span id="partnership">-</span></div><div>LIVE SCORE</div></div><div class="cards"><div class="card"><div class="label">BATTER</div><div class="player" id="bat1">-</div><div class="player-score" id="bat1score">-</div><div class="small" id="bat1stats"></div></div><div class="card"><div class="label">BATTER</div><div class="player" id="bat2">-</div><div class="player-score" id="bat2score">-</div><div class="small" id="bat2stats"></div></div><div class="card red"><div class="label">BOWLER</div><div class="player" id="bowler">-</div><div class="player-score" id="bowlerscore">-</div><div class="small" id="bowlerstats"></div></div></div><div class="footer"><div id="last">UPDATES AUTOMATICALLY</div><div>LIVE CRICKET</div></div></div><script>const MID=__MID__;const $=id=>document.getElementById(id);const set=(id,v)=>$(id).textContent=v||"-";async function update(){try{const r=await fetch("/selected-score?match_id="+encodeURIComponent(MID)+"&t="+Date.now(),{cache:"no-store"});const d=await r.json();if(!d.selected){set("status","NO MATCH");return}const m=d.match||{};set("team1",(m.team1_flag||"")+" "+(m.team1||"TEAM 1"));set("team2",(m.team2||"TEAM 2")+" "+(m.team2_flag||""));set("score1",m.team1_score);set("score2",m.team2_score);set("over1",m.team1_overs?m.team1_overs+" OVERS":"");set("over2",m.team2_overs?m.team2_overs+" OVERS":"");set("badge1",m.team1_flag||"🏳️");set("badge2",m.team2_flag||"🏳️");set("title",m.title);set("status",m.status);set("crr",m.crr);set("partnership",m.partnership);const b=m.batsmen||[];if(b[0]){set("bat1",b[0].name);set("bat1score",b[0].runs+" ("+b[0].balls+")")}if(b[1]){set("bat2",b[1].name);set("bat2score",b[1].runs+" ("+b[1].balls+")")}if(m.bowler){set("bowler",m.bowler.name);set("bowlerscore",m.bowler.overs+"-"+m.bowler.maidens+"-"+m.bowler.runs+"-"+m.bowler.wickets);set("bowlerstats","ECO: "+m.bowler.economy)}set("last","LAST UPDATE: "+new Date().toLocaleTimeString())}catch(e){set("status","RETRYING DATA");set("last","Live data temporarily unavailable")}}update();setInterval(update,15000);</script></body></html>'''.replace("__MID__", mid_js)
+    html = '''<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OBS Cricket Scoreboard</title><style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:transparent!important;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#fff}.wrap{width:100vw;height:100vh;padding:1.2vw;background:transparent}.board{width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;border-radius:18px;background:#07111f;box-shadow:0 0 35px rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.12)}.hero{flex:0 0 47%;display:grid;grid-template-columns:1fr 1.45fr 1fr;background:linear-gradient(110deg,#062d54 0%,#081426 46%,#280913 100%)}.side{padding:2.2vw;display:flex;align-items:center;gap:1.4vw}.side.right{justify-content:flex-end;text-align:right}.flag{width:6vw;height:6vw;min-width:58px;min-height:58px;border-radius:50%;background:#f4f4f4;color:#111;display:flex;align-items:center;justify-content:center;font-size:2.5vw;border:3px solid #fff;box-shadow:0 0 18px rgba(255,255,255,.2)}.team{font-size:2.2vw;font-weight:1000;letter-spacing:.04em;text-transform:uppercase}.score{font-size:5.1vw;line-height:1;color:#ffd21a;font-weight:1000;margin-top:.25vw}.overs{font-size:1.25vw;font-weight:800;margin-top:.4vw;color:#e7edf5}.middle{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1vw}.battle{font-size:2.7vw;font-weight:1000;letter-spacing:.04em;font-style:italic;margin-bottom:.8vw}.versus{font-size:3.4vw;font-weight:1000;color:#fff;line-height:1;margin-bottom:.6vw}.captains{display:flex;align-items:center;justify-content:center;gap:1vw;width:100%}.captain{width:44%;padding:.75vw 1vw;border-radius:12px;background:rgba(7,28,53,.82);border:1px solid rgba(47,150,255,.65);font-size:1.25vw;font-weight:1000}.captain.redcap{background:rgba(75,11,20,.82);border-color:rgba(255,40,70,.7)}.captain span{display:block;font-size:.9vw;color:#b9c7d8;margin-top:.25vw;font-weight:800}.status{margin-top:.8vw;padding:.55vw 1.3vw;border-radius:999px;background:#d7192d;font-size:1vw;font-weight:1000;letter-spacing:.04em}.info{flex:0 0 9%;display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;text-align:center;background:linear-gradient(90deg,#b10f1e,#e21b2e,#b10f1e);font-size:1.35vw;font-weight:1000}.info b{color:#ffe15a}.cards{flex:1;display:grid;grid-template-columns:1.25fr 1.25fr 1fr;gap:3px;background:#02050a;min-height:0}.card{padding:1.2vw 1.5vw;background:linear-gradient(135deg,#07518b,#0a3158);display:flex;flex-direction:column;justify-content:center}.card.red{background:linear-gradient(135deg,#8e1524,#4d0b15)}.label{font-size:.95vw;font-weight:1000;letter-spacing:.08em;color:#c9d6e6;border-bottom:1px solid rgba(255,255,255,.2);padding-bottom:.45vw}.pname{font-size:1.65vw;font-weight:1000;margin-top:.65vw}.pstat{font-size:2vw;font-weight:1000;color:#ffd21a;margin-top:.2vw}.sub{font-size:.85vw;color:#d4dde8;font-weight:800;margin-top:.25vw}.footer{flex:0 0 6%;display:flex;align-items:center;justify-content:space-between;padding:0 1.5vw;background:#02050a;font-size:.85vw;font-weight:900;letter-spacing:.05em}.live{color:#ffdf4a}.dot{display:inline-block;width:.65vw;height:.65vw;background:#22e56f;border-radius:50%;margin-right:.35vw;box-shadow:0 0 10px #22e56f}@media(max-width:900px){.wrap{padding:0}.board{border-radius:0}.team{font-size:3vw}.score{font-size:7vw}.overs{font-size:1.8vw}.battle{font-size:4vw}.versus{font-size:4.5vw}.captain{font-size:2vw}.captain span{font-size:1.4vw}.status{font-size:1.5vw}.info{font-size:1.8vw}.pname{font-size:2.3vw}.pstat{font-size:2.8vw}.label{font-size:1.3vw}.sub{font-size:1.1vw}}
+</style></head><body><div class="wrap"><div class="board"><div class="hero"><div class="side"><div class="flag" id="flag1">🏳️</div><div><div class="team" id="team1">TEAM 1</div><div class="score" id="score1">-</div><div class="overs" id="over1"></div></div></div><div class="middle"><div class="battle">CAPTAINS BATTLE</div><div class="versus">VS</div><div class="captains"><div class="captain" id="cap1">Captain<span id="cap1team">TEAM 1</span></div><div class="captain redcap" id="cap2">Captain<span id="cap2team">TEAM 2</span></div></div><div class="status" id="status">WAITING FOR LIVE DATA</div></div><div class="side right"><div><div class="team" id="team2">TEAM 2</div><div class="score" id="score2">-</div><div class="overs" id="over2"></div></div><div class="flag" id="flag2">🏳️</div></div></div><div class="info"><div>CRR <b id="crr">-</b></div><div>P'SHIP <b id="partnership">-</b></div><div id="matchtitle">LIVE CRICKET</div></div><div class="cards"><div class="card"><div class="label">BATTER 1</div><div class="pname" id="bat1">-</div><div class="pstat" id="bat1score">-</div><div class="sub" id="bat1stats">LIVE BATTER</div></div><div class="card"><div class="label">BATTER 2</div><div class="pname" id="bat2">-</div><div class="pstat" id="bat2score">-</div><div class="sub" id="bat2stats">LIVE BATTER</div></div><div class="card red"><div class="label">BOWLER</div><div class="pname" id="bowler">-</div><div class="pstat" id="bowlerscore">-</div><div class="sub" id="bowlerstats">LIVE BOWLER</div></div></div><div class="footer"><div id="last">UPDATES AUTOMATICALLY</div><div class="live"><span class="dot"></span>LIVE CRICKET</div></div></div></div><script>
+const MID=__MID__;const $=id=>document.getElementById(id);const set=(id,v)=>$(id).textContent=(v===undefined||v===null||v==="")?"-":v;
+async function update(){try{const r=await fetch("/selected-score?match_id="+encodeURIComponent(MID)+"&t="+Date.now(),{cache:"no-store"});const d=await r.json();if(!d.selected){set("status","NO MATCH");return}const m=d.match||{};set("team1",m.team1||"TEAM 1");set("team2",m.team2||"TEAM 2");set("score1",m.team1_score);set("score2",m.team2_score);set("over1",m.team1_overs?m.team1_overs+" OVERS":"");set("over2",m.team2_overs?m.team2_overs+" OVERS":"");set("flag1",m.team1_flag||"🏳️");set("flag2",m.team2_flag||"🏳️");set("cap1team",m.team1||"TEAM 1");set("cap2team",m.team2||"TEAM 2");const caps=m.captains||[];set("cap1",caps[0]||"Captain");set("cap2",caps[1]||"Captain");set("status",m.status||"LIVE");set("crr",m.crr);set("partnership",m.partnership);set("matchtitle",m.title||"LIVE CRICKET");const b=m.batsmen||[];if(b[0]){set("bat1",b[0].name);set("bat1score",b[0].runs+" ("+b[0].balls+")")}if(b[1]){set("bat2",b[1].name);set("bat2score",b[1].runs+" ("+b[1].balls+")")}if(m.bowler){set("bowler",m.bowler.name);set("bowlerscore",m.bowler.overs+"-"+m.bowler.maidens+"-"+m.bowler.runs+"-"+m.bowler.wickets);set("bowlerstats","ECO: "+m.bowler.economy)}set("last","LAST UPDATE: "+new Date().toLocaleTimeString())}catch(e){set("status","RETRYING LIVE DATA");set("last","Live data temporarily unavailable")}}update();setInterval(update,15000);
+</script></body></html>'''.replace("__MID__", mid_js)
     return Response(html, mimetype="text/html")
-
 
 if __name__ == "__main__":
     import os

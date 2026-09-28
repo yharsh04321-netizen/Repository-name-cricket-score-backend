@@ -211,7 +211,7 @@ def fetch_match_detail(match):
                 p1, p2 = extract_teams(title)
                 if p1 != "TEAM 1":
                     team1, team2 = p1, p2
-                    result.update({"title":title, "team1":team1, "team2":team2, "team1_code":team_code(team1), "team2_code":team_code(team2), "team1_flag":team_flag(team1), "team2_flag":team_flag(team2)})
+                    result.update({"title":f"{team1} vs {team2}", "team1":team1, "team2":team2, "team1_code":team_code(team1), "team2_code":team_code(team2), "team1_flag":team_flag(team1), "team2_flag":team_flag(team2)})
             texts.append(page_text)
             if len(page_text) > 300:
                 break

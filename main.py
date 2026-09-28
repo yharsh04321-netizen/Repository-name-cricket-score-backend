@@ -5,7 +5,7 @@ from html import escape
 import re
 import time
 import json
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, quote_plus
 
 app = Flask(__name__)
 CRICBUZZ_URL = "https://www.cricbuzz.com/cricket-match/live-scores"
@@ -28,10 +28,10 @@ FLAGS = {
 def clean(v):
     return " ".join(str(v or "").split()).strip()
 
-def absolute_url(url):
+def absolute_url(url, base="https://www.cricbuzz.com"):
     if not url:
         return ""
-    return url if url.startswith("http") else "https://www.cricbuzz.com" + url
+    return urljoin(base, url)
 
 def jina_url(url):
     return "https://r.jina.ai/http://" + url.removeprefix("https://").removeprefix("http://")
@@ -46,12 +46,11 @@ def team_flag(name):
 def team_code(name):
     n = clean(name).upper()
     codes = {
-        "INDIA":"IND","WEST INDIES":"WI","AUSTRALIA":"AUS","SOUTH AFRICA":"RSA",
-        "ENGLAND":"ENG","SRI LANKA":"SL","PAKISTAN":"PAK","HONG KONG":"HK",
-        "AFGHANISTAN":"AFG","BANGLADESH":"BAN","MALAYSIA":"MAL","NEPAL":"NEP",
-        "ZIMBABWE":"ZIM","NEW ZEALAND":"NZ","IRELAND":"IRE","OMAN":"OMA",
-        "USA":"USA","CANADA":"CAN","BERMUDA":"BER","NIGERIA":"NGR",
-        "SIERRA LEONE":"SLE","CAYMAN ISLANDS":"CAY"
+        "INDIA":"IND","INDIA U19":"INDU19","WEST INDIES":"WI","AUSTRALIA":"AUS","AUSTRALIA U19":"AUSU19",
+        "SOUTH AFRICA":"RSA","ENGLAND":"ENG","SRI LANKA":"SL","PAKISTAN":"PAK","HONG KONG":"HK",
+        "AFGHANISTAN":"AFG","BANGLADESH":"BAN","MALAYSIA":"MAL","NEPAL":"NEP","ZIMBABWE":"ZIM",
+        "NEW ZEALAND":"NZ","IRELAND":"IRE","OMAN":"OMA","USA":"USA","CANADA":"CAN",
+        "BERMUDA":"BER","NIGERIA":"NGR","SIERRA LEONE":"SLE","CAYMAN ISLANDS":"CAY"
     }
     return codes.get(n, "".join(x[0] for x in n.split()[:3])[:5] or "T1")
 
@@ -120,9 +119,9 @@ def parse_scores(text):
     text = clean(text)
     found = []
     patterns = [
-        r"\b([A-Z][A-Z0-9]{1,8})\s+(\d{1,4})\s*-\s*(\d{1,2})\s*\(\s*(\d+(?:\.\d+)?)\s*(?:Ov|Overs|over)\b",
-        r"\b([A-Z][A-Z0-9]{1,8})\s+(\d{1,4})\s*/\s*(\d{1,2})\s*\(\s*(\d+(?:\.\d+)?)\s*\)",
-        r"\b([A-Z][A-Z0-9]{1,8})\s+(\d{1,4})\s*-\s*(\d{1,2})\s*\(\s*(\d+(?:\.\d+)?)\s*\)",
+        r"\b([A-Z][A-Z0-9]{1,12})\s+(\d{1,4})\s*-\s*(\d{1,2})\s*\(\s*(\d+(?:\.\d+)?)\s*(?:Ov|Overs|over)\b",
+        r"\b([A-Z][A-Z0-9]{1,12})\s+(\d{1,4})\s*/\s*(\d{1,2})\s*\(\s*(\d+(?:\.\d+)?)\s*\)",
+        r"\b([A-Z][A-Z0-9]{1,12})\s+(\d{1,4})\s*-\s*(\d{1,2})\s*\(\s*(\d+(?:\.\d+)?)\s*\)"
     ]
     for pat in patterns:
         for m in re.finditer(pat, text, re.I):
@@ -132,7 +131,7 @@ def parse_scores(text):
     return found[:4]
 
 def parse_players(text):
-    section = clean(text[-16000:])
+    section = clean(text[-18000:])
     bats = []
     patterns = [
         r"\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,4})\s+(\d+)\s+(\d+)\s+(?:\d+)\s+(?:\d+)\s+(?:[0-9.]+)",
@@ -143,9 +142,8 @@ def parse_players(text):
             name = clean(m.group(1)).replace(" *", "")
             if name.lower() in {"over summary", "player of the match", "extras", "total"}:
                 continue
-            runs, balls = m.group(2), m.group(3)
             if not any(x["name"] == name for x in bats):
-                bats.append({"name":name, "runs":runs, "balls":balls})
+                bats.append({"name":name, "runs":m.group(2), "balls":m.group(3)})
             if len(bats) == 2:
                 break
         if len(bats) == 2:
@@ -156,23 +154,76 @@ def parse_players(text):
         bowler = {"name":clean(m.group(1)).replace(" *", ""), "overs":m.group(2), "maidens":m.group(3), "runs":m.group(4), "wickets":m.group(5), "economy":m.group(6)}
     return bats, bowler
 
-def parse_captains(text):
-    """Find players explicitly marked captain on the source page."""
-    section = clean(text[-20000:])
+def norm_name(s):
+    return re.sub(r"[^a-z0-9]", "", clean(s).lower().replace("(c)", "").replace("(wk)", ""))
+
+def extract_captain_names(text):
+    section = clean(text[-30000:])
     found = []
     patterns = [
         r"\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s*\(c\)",
-        r"\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s*\(C\)",
         r"\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})\s+captain\b"
     ]
     for pat in patterns:
-        for m in re.finditer(pat, section):
+        for m in re.finditer(pat, section, re.I):
             name = clean(m.group(1)).replace(" *", "")
-            if name and name not in found and len(name.split()) <= 4:
+            if name and len(name.split()) <= 4 and name not in found:
                 found.append(name)
             if len(found) >= 2:
                 return found[:2]
     return found[:2]
+
+def image_from_profile(profile_url, player_name):
+    try:
+        r = requests.get(absolute_url(profile_url), headers=HEADERS, timeout=8)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        target = norm_name(player_name)
+        for img in soup.find_all("img"):
+            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src") or img.get("data-original")
+            alt = img.get("alt", "")
+            if src and target and target in norm_name(alt):
+                return absolute_url(src)
+        for img in soup.find_all("img"):
+            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src") or img.get("data-original")
+            if src and "static.cricbuzz.com" in src:
+                return absolute_url(src)
+    except Exception as e:
+        print("profile image error:", e)
+    return ""
+
+def parse_captains(page_html, text):
+    names = extract_captain_names(text)
+    if not names:
+        return []
+    soup = BeautifulSoup(page_html or "", "html.parser")
+    links = []
+    for a in soup.select('a[href*="/profiles/"]'):
+        label = clean(a.get_text(" ", strip=True)).replace("(c)", "").strip()
+        href = a.get("href", "")
+        img = a.find("img")
+        src = ""
+        if img:
+            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src") or img.get("data-original") or ""
+        links.append((label, href, src))
+    result = []
+    for name in names:
+        image = ""
+        profile = ""
+        n = norm_name(name)
+        for label, href, src in links:
+            ln = norm_name(label)
+            if ln == n or (n and (n in ln or ln in n)):
+                profile = absolute_url(href)
+                image = absolute_url(src) if src else ""
+                break
+        if not image and profile:
+            image = image_from_profile(profile, name)
+        if not image:
+            # Reliable visual fallback: an initials avatar. The real Cricbuzz photo is used whenever available.
+            image = "https://ui-avatars.com/api/?name=" + quote_plus(name) + "&size=256&background=15263c&color=ffffff&bold=true&format=png"
+        result.append({"name":name, "image":image})
+    return result[:2]
 
 def fetch_match_detail(match):
     match_id = str(match["id"])
@@ -195,7 +246,7 @@ def fetch_match_detail(match):
     card_url = scorecard_url(original)
     if card_url: urls.append(card_url)
     if original and original not in urls: urls.append(original)
-    texts = []
+    texts, htmls = [], []
     for url in urls:
         try:
             r = requests.get(url, headers=HEADERS, timeout=12)
@@ -207,8 +258,9 @@ def fetch_match_detail(match):
                 p1, p2 = extract_teams(title)
                 if p1 != "TEAM 1":
                     team1, team2 = p1, p2
-                    result.update({"title":f"{team1} vs {team2}", "team1":team1, "team2":team2, "team1_code":team_code(team1), "team2_code":team_code(team2), "team1_flag":team_flag(team1), "team2_flag":team_flag(team2)})
+                    result.update({"title":f"{team1} vs {team2}","team1":team1,"team2":team2,"team1_code":team_code(team1),"team2_code":team_code(team2),"team1_flag":team_flag(team1),"team2_flag":team_flag(team2)})
             texts.append(page_text)
+            htmls.append(r.text)
             if len(page_text) > 300:
                 break
         except Exception as e:
@@ -219,11 +271,12 @@ def fetch_match_detail(match):
                 r = requests.get(jina_url(url), headers={"User-Agent":HEADERS["User-Agent"]}, timeout=15)
                 r.raise_for_status()
                 texts.append(clean(r.text))
-                if len(texts[-1]) > 300:
-                    break
+                htmls.append("")
+                break
             except Exception as e:
                 print("jina detail error:", e)
     text = max(texts, key=len) if texts else ""
+    html = htmls[texts.index(text)] if texts and len(htmls) == len(texts) else ""
     scores = parse_scores(text)
     if scores:
         result["team1_score"] = f"{scores[0]['runs']}-{scores[0]['wickets']}"
@@ -235,32 +288,26 @@ def fetch_match_detail(match):
     if m: result["crr"] = m.group(1)
     m = re.search(r"P['’]?SHIP\s*[: ]\s*([0-9]+(?:\([0-9.]+\))?)", text, re.I)
     if m: result["partnership"] = m.group(1)
-    status_patterns = [
-        r"Match abandoned without toss", r"Match abandoned", r"Innings Break",
-        r"Day\s+\d+\s*:\s*Stumps\s*[-:]\s*[^|]{0,120}", r"[A-Za-z ]+ won by \d+ runs",
-        r"[A-Za-z ]+ won by \d+ wickets"
-    ]
+    status_patterns = [r"Match abandoned without toss",r"Match abandoned",r"Innings Break",r"Day\s+\d+\s*:\s*Stumps\s*[-:]\s*[^|]{0,120}",r"[A-Za-z ]+ won by \d+ runs",r"[A-Za-z ]+ won by \d+ wickets"]
     for pat in status_patterns:
         m = re.search(pat, text, re.I)
         if m:
-            result["status"] = clean(m.group(0))
-            break
+            result["status"] = clean(m.group(0)); break
     else:
-        if scores:
-            result["status"] = "LIVE"
+        if scores: result["status"] = "LIVE"
     result["batsmen"], result["bowler"] = parse_players(text)
-    result["captains"] = parse_captains(text)
+    result["captains"] = parse_captains(html, text)
     detail_cache[match_id] = {"time":now, "data":result}
     return result
 
 @app.route("/")
 def home():
-    return jsonify({"service":"Cricket Live Score Backend", "status":"online", "success":True})
+    return jsonify({"service":"Cricket Live Score Backend","status":"online","success":True})
 
 @app.route("/live-scores")
 def live_scores():
     matches = fetch_matches()
-    return jsonify({"success":True, "count":len(matches), "matches":matches})
+    return jsonify({"success":True,"count":len(matches),"matches":matches})
 
 @app.route("/select-match", methods=["GET","POST"])
 def select_match():
@@ -272,8 +319,7 @@ def select_match():
     selected_id = request.args.get("selected", "")
     selected = next((m for m in matches if str(m["id"]) == str(selected_id)), None)
     cards = "".join(f'''<div class="match"><div class="live">● TODAY / LIVE</div><div class="name">{escape(m["name"])}</div><form method="POST"><input type="hidden" name="match_id" value="{escape(m["id"])}"><button>SELECT THIS MATCH</button></form></div>''' for m in matches)
-    if not cards:
-        cards = '<div class="empty">No current matches found right now.</div>'
+    if not cards: cards = '<div class="empty">No current matches found right now.</div>'
     selected_html = ""
     if selected:
         board = "/scoreboard?match_id=" + quote(str(selected["id"]))
@@ -285,17 +331,17 @@ def select_match():
 def selected_match_api():
     mid = request.args.get("match_id", "")
     m = get_match_by_id(mid) if mid else None
-    return jsonify({"success":True, "selected":bool(m), "match":m})
+    return jsonify({"success":True,"selected":bool(m),"match":m})
 
 @app.route("/selected-score")
 def selected_score():
     mid = request.args.get("match_id", "")
     m = get_match_by_id(mid) if mid else None
     if not m:
-        return jsonify({"success":True, "selected":False, "message":"No match selected"})
+        return jsonify({"success":True,"selected":False,"message":"No match selected"})
     try:
         data = fetch_match_detail(m)
-        return jsonify({"success":True, "selected":True, "match":data})
+        return jsonify({"success":True,"selected":True,"match":data})
     except Exception as e:
         print("selected score error:", repr(e))
         t1, t2 = extract_teams(m.get("name", ""))
@@ -309,10 +355,11 @@ def scoreboard():
         return Response("<html><body style='font-family:Arial;padding:30px'>Select a match first. Open <a href='/select-match'>Match Selector</a>.</body></html>", mimetype="text/html")
     mid_js = json.dumps(str(mid))
     html = '''<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OBS Cricket Scoreboard</title><style>
-*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:transparent!important;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#fff}.wrap{width:100vw;height:100vh;padding:1.2vw;background:transparent}.board{width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;border-radius:18px;background:#07111f;box-shadow:0 0 35px rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.12)}.hero{flex:0 0 47%;display:grid;grid-template-columns:1fr 1.45fr 1fr;background:linear-gradient(110deg,#062d54 0%,#081426 46%,#280913 100%)}.side{padding:2.2vw;display:flex;align-items:center;gap:1.4vw}.side.right{justify-content:flex-end;text-align:right}.flag{width:6vw;height:6vw;min-width:58px;min-height:58px;border-radius:50%;background:#f4f4f4;color:#111;display:flex;align-items:center;justify-content:center;font-size:2.5vw;border:3px solid #fff;box-shadow:0 0 18px rgba(255,255,255,.2)}.team{font-size:2.2vw;font-weight:1000;letter-spacing:.04em;text-transform:uppercase}.score{font-size:5.1vw;line-height:1;color:#ffd21a;font-weight:1000;margin-top:.25vw}.overs{font-size:1.25vw;font-weight:800;margin-top:.4vw;color:#e7edf5}.middle{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1vw}.battle{font-size:2.7vw;font-weight:1000;letter-spacing:.04em;font-style:italic;margin-bottom:.8vw}.versus{font-size:3.4vw;font-weight:1000;color:#fff;line-height:1;margin-bottom:.6vw}.captains{display:flex;align-items:center;justify-content:center;gap:1vw;width:100%}.captain{width:44%;padding:.75vw 1vw;border-radius:12px;background:rgba(7,28,53,.82);border:1px solid rgba(47,150,255,.65);font-size:1.25vw;font-weight:1000}.captain.redcap{background:rgba(75,11,20,.82);border-color:rgba(255,40,70,.7)}.captain span{display:block;font-size:.9vw;color:#b9c7d8;margin-top:.25vw;font-weight:800}.status{margin-top:.8vw;padding:.55vw 1.3vw;border-radius:999px;background:#d7192d;font-size:1vw;font-weight:1000;letter-spacing:.04em}.info{flex:0 0 9%;display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;text-align:center;background:linear-gradient(90deg,#b10f1e,#e21b2e,#b10f1e);font-size:1.35vw;font-weight:1000}.info b{color:#ffe15a}.cards{flex:1;display:grid;grid-template-columns:1.25fr 1.25fr 1fr;gap:3px;background:#02050a;min-height:0}.card{padding:1.2vw 1.5vw;background:linear-gradient(135deg,#07518b,#0a3158);display:flex;flex-direction:column;justify-content:center}.card.red{background:linear-gradient(135deg,#8e1524,#4d0b15)}.label{font-size:.95vw;font-weight:1000;letter-spacing:.08em;color:#c9d6e6;border-bottom:1px solid rgba(255,255,255,.2);padding-bottom:.45vw}.pname{font-size:1.65vw;font-weight:1000;margin-top:.65vw}.pstat{font-size:2vw;font-weight:1000;color:#ffd21a;margin-top:.2vw}.sub{font-size:.85vw;color:#d4dde8;font-weight:800;margin-top:.25vw}.footer{flex:0 0 6%;display:flex;align-items:center;justify-content:space-between;padding:0 1.5vw;background:#02050a;font-size:.85vw;font-weight:900;letter-spacing:.05em}.live{color:#ffdf4a}.dot{display:inline-block;width:.65vw;height:.65vw;background:#22e56f;border-radius:50%;margin-right:.35vw;box-shadow:0 0 10px #22e56f}@media(max-width:900px){.wrap{padding:0}.board{border-radius:0}.team{font-size:3vw}.score{font-size:7vw}.overs{font-size:1.8vw}.battle{font-size:4vw}.versus{font-size:4.5vw}.captain{font-size:2vw}.captain span{font-size:1.4vw}.status{font-size:1.5vw}.info{font-size:1.8vw}.pname{font-size:2.3vw}.pstat{font-size:2.8vw}.label{font-size:1.3vw}.sub{font-size:1.1vw}}
-</style></head><body><div class="wrap"><div class="board"><div class="hero"><div class="side"><div class="flag" id="flag1">🏳️</div><div><div class="team" id="team1">TEAM 1</div><div class="score" id="score1">-</div><div class="overs" id="over1"></div></div></div><div class="middle"><div class="battle">CAPTAINS BATTLE</div><div class="versus">VS</div><div class="captains"><div class="captain" id="cap1">Captain<span id="cap1team">TEAM 1</span></div><div class="captain redcap" id="cap2">Captain<span id="cap2team">TEAM 2</span></div></div><div class="status" id="status">WAITING FOR LIVE DATA</div></div><div class="side right"><div><div class="team" id="team2">TEAM 2</div><div class="score" id="score2">-</div><div class="overs" id="over2"></div></div><div class="flag" id="flag2">🏳️</div></div></div><div class="info"><div>CRR <b id="crr">-</b></div><div>P'SHIP <b id="partnership">-</b></div><div id="matchtitle">LIVE CRICKET</div></div><div class="cards"><div class="card"><div class="label">BATTER 1</div><div class="pname" id="bat1">-</div><div class="pstat" id="bat1score">-</div><div class="sub" id="bat1stats">LIVE BATTER</div></div><div class="card"><div class="label">BATTER 2</div><div class="pname" id="bat2">-</div><div class="pstat" id="bat2score">-</div><div class="sub" id="bat2stats">LIVE BATTER</div></div><div class="card red"><div class="label">BOWLER</div><div class="pname" id="bowler">-</div><div class="pstat" id="bowlerscore">-</div><div class="sub" id="bowlerstats">LIVE BOWLER</div></div></div><div class="footer"><div id="last">UPDATES AUTOMATICALLY</div><div class="live"><span class="dot"></span>LIVE CRICKET</div></div></div></div><script>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:transparent!important;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#fff}.wrap{width:100vw;height:100vh;padding:1.2vw;background:transparent}.board{width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;border-radius:18px;background:#07111f;box-shadow:0 0 35px rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.12)}.hero{flex:0 0 47%;display:grid;grid-template-columns:1fr 1.45fr 1fr;background:linear-gradient(110deg,#062d54 0%,#081426 46%,#280913 100%)}.side{padding:2vw;display:flex;align-items:center;gap:1.2vw}.side.right{justify-content:flex-end;text-align:right}.flag{width:6vw;height:6vw;min-width:58px;min-height:58px;border-radius:50%;background:#f4f4f4;color:#111;display:flex;align-items:center;justify-content:center;font-size:2.5vw;border:3px solid #fff;box-shadow:0 0 18px rgba(255,255,255,.2)}.team{font-size:2.15vw;font-weight:1000;letter-spacing:.04em;text-transform:uppercase}.score{font-size:5vw;line-height:1;color:#ffd21a;font-weight:1000;margin-top:.25vw}.overs{font-size:1.2vw;font-weight:800;margin-top:.4vw;color:#e7edf5}.middle{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:.8vw}.battle{font-size:2.45vw;font-weight:1000;letter-spacing:.04em;font-style:italic;margin-bottom:.3vw}.versus{font-size:2.7vw;font-weight:1000;color:#fff;line-height:1;margin-bottom:.35vw}.captains{display:flex;align-items:center;justify-content:center;gap:.8vw;width:100%}.captain{width:45%;min-height:7vw;padding:.45vw .55vw;border-radius:14px;background:rgba(7,28,53,.86);border:1px solid rgba(47,150,255,.65);display:grid;grid-template-columns:4.7vw 1fr;align-items:center;text-align:left}.captain.redcap{background:rgba(75,11,20,.86);border-color:rgba(255,40,70,.7)}.capphoto{width:4.2vw;height:4.2vw;min-width:48px;min-height:48px;border-radius:50%;object-fit:cover;background:#18283c;border:2px solid rgba(255,255,255,.9);display:block}.captext{padding-left:.45vw;overflow:hidden}.caprole{font-size:.72vw;color:#ffd84d;font-weight:900;text-transform:uppercase}.capname{font-size:1.15vw;font-weight:1000;line-height:1.05;margin-top:.12vw;word-break:break-word}.capteam{font-size:.68vw;color:#b9c7d8;margin-top:.2vw;font-weight:800}.status{margin-top:.45vw;padding:.42vw 1vw;border-radius:999px;background:#d7192d;font-size:.85vw;font-weight:1000;letter-spacing:.04em}.info{flex:0 0 9%;display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;text-align:center;background:linear-gradient(90deg,#b10f1e,#e21b2e,#b10f1e);font-size:1.25vw;font-weight:1000}.info b{color:#ffe15a}.cards{flex:1;display:grid;grid-template-columns:1.25fr 1.25fr 1fr;gap:3px;background:#02050a;min-height:0}.card{padding:1.2vw 1.5vw;background:linear-gradient(135deg,#07518b,#0a3158);display:flex;flex-direction:column;justify-content:center}.card.red{background:linear-gradient(135deg,#8e1524,#4d0b15)}.label{font-size:.9vw;font-weight:1000;letter-spacing:.08em;color:#c9d6e6;border-bottom:1px solid rgba(255,255,255,.2);padding-bottom:.45vw}.pname{font-size:1.55vw;font-weight:1000;margin-top:.65vw}.pstat{font-size:1.9vw;font-weight:1000;color:#ffd21a;margin-top:.2vw}.sub{font-size:.82vw;color:#d4dde8;font-weight:800;margin-top:.25vw}.footer{flex:0 0 6%;display:flex;align-items:center;justify-content:space-between;padding:0 1.5vw;background:#02050a;font-size:.8vw;font-weight:900;letter-spacing:.05em}.live{color:#ffdf4a}.dot{display:inline-block;width:.65vw;height:.65vw;background:#22e56f;border-radius:50%;margin-right:.35vw;box-shadow:0 0 10px #22e56f}@media(max-width:900px){.wrap{padding:0}.board{border-radius:0}.team{font-size:3vw}.score{font-size:7vw}.overs{font-size:1.8vw}.battle{font-size:4vw}.versus{font-size:4.5vw}.captain{grid-template-columns:7vw 1fr;min-height:11vw}.capphoto{width:6.2vw;height:6.2vw}.caprole{font-size:1.1vw}.capname{font-size:1.8vw}.capteam{font-size:1.1vw}.status{font-size:1.5vw}.info{font-size:1.8vw}.pname{font-size:2.3vw}.pstat{font-size:2.8vw}.label{font-size:1.3vw}.sub{font-size:1.1vw}}
+</style></head><body><div class="wrap"><div class="board"><div class="hero"><div class="side"><div class="flag" id="flag1">🏳️</div><div><div class="team" id="team1">TEAM 1</div><div class="score" id="score1">-</div><div class="overs" id="over1"></div></div></div><div class="middle"><div class="battle">CAPTAINS BATTLE</div><div class="versus">VS</div><div class="captains"><div class="captain" id="capcard1"><img class="capphoto" id="capimg1" alt="Captain 1"><div class="captext"><div class="caprole">CAPTAIN</div><div class="capname" id="cap1">-</div><div class="capteam" id="cap1team">TEAM 1</div></div></div><div class="captain redcap" id="capcard2"><img class="capphoto" id="capimg2" alt="Captain 2"><div class="captext"><div class="caprole">CAPTAIN</div><div class="capname" id="cap2">-</div><div class="capteam" id="cap2team">TEAM 2</div></div></div></div><div class="status" id="status">WAITING FOR LIVE DATA</div></div><div class="side right"><div><div class="team" id="team2">TEAM 2</div><div class="score" id="score2">-</div><div class="overs" id="over2"></div></div><div class="flag" id="flag2">🏳️</div></div></div><div class="info"><div>CRR <b id="crr">-</b></div><div>P'SHIP <b id="partnership">-</b></div><div id="matchtitle">LIVE CRICKET</div></div><div class="cards"><div class="card"><div class="label">BATTER 1</div><div class="pname" id="bat1">-</div><div class="pstat" id="bat1score">-</div><div class="sub" id="bat1stats">LIVE BATTER</div></div><div class="card"><div class="label">BATTER 2</div><div class="pname" id="bat2">-</div><div class="pstat" id="bat2score">-</div><div class="sub" id="bat2stats">LIVE BATTER</div></div><div class="card red"><div class="label">BOWLER</div><div class="pname" id="bowler">-</div><div class="pstat" id="bowlerscore">-</div><div class="sub" id="bowlerstats">LIVE BOWLER</div></div></div><div class="footer"><div id="last">UPDATES AUTOMATICALLY</div><div class="live"><span class="dot"></span>LIVE CRICKET</div></div></div></div><script>
 const MID=__MID__;const $=id=>document.getElementById(id);const set=(id,v)=>$(id).textContent=(v===undefined||v===null||v==="")?"-":v;
-async function update(){try{const r=await fetch("/selected-score?match_id="+encodeURIComponent(MID)+"&t="+Date.now(),{cache:"no-store"});const d=await r.json();if(!d.selected){set("status","NO MATCH");return}const m=d.match||{};set("team1",m.team1||"TEAM 1");set("team2",m.team2||"TEAM 2");set("score1",m.team1_score);set("score2",m.team2_score);set("over1",m.team1_overs?m.team1_overs+" OVERS":"");set("over2",m.team2_overs?m.team2_overs+" OVERS":"");set("flag1",m.team1_flag||"🏳️");set("flag2",m.team2_flag||"🏳️");set("cap1team",m.team1||"TEAM 1");set("cap2team",m.team2||"TEAM 2");const caps=m.captains||[];set("cap1",caps[0]||"Captain");set("cap2",caps[1]||"Captain");set("status",m.status||"LIVE");set("crr",m.crr);set("partnership",m.partnership);set("matchtitle",m.title||"LIVE CRICKET");const b=m.batsmen||[];if(b[0]){set("bat1",b[0].name);set("bat1score",b[0].runs+" ("+b[0].balls+")")}if(b[1]){set("bat2",b[1].name);set("bat2score",b[1].runs+" ("+b[1].balls+")")}if(m.bowler){set("bowler",m.bowler.name);set("bowlerscore",m.bowler.overs+"-"+m.bowler.maidens+"-"+m.bowler.runs+"-"+m.bowler.wickets);set("bowlerstats","ECO: "+m.bowler.economy)}set("last","LAST UPDATE: "+new Date().toLocaleTimeString())}catch(e){set("status","RETRYING LIVE DATA");set("last","Live data temporarily unavailable")}}update();setInterval(update,15000);
+function captain(card, img, name, team, data){set(name,(data&&data.name)||"Captain");set(team,team==="cap1team"?($("team1").textContent||"TEAM 1"):($("team2").textContent||"TEAM 2"));const el=$(img);el.onerror=()=>{el.style.display="none"};el.style.display="block";if(data&&data.image){el.src=data.image}else{el.style.display="none"}}
+async function update(){try{const r=await fetch("/selected-score?match_id="+encodeURIComponent(MID)+"&t="+Date.now(),{cache:"no-store"});const d=await r.json();if(!d.selected){set("status","NO MATCH");return}const m=d.match||{};set("team1",m.team1||"TEAM 1");set("team2",m.team2||"TEAM 2");set("score1",m.team1_score);set("score2",m.team2_score);set("over1",m.team1_overs?m.team1_overs+" OVERS":"");set("over2",m.team2_overs?m.team2_overs+" OVERS":"");set("flag1",m.team1_flag||"🏳️");set("flag2",m.team2_flag||"🏳️");set("cap1team",m.team1||"TEAM 1");set("cap2team",m.team2||"TEAM 2");const caps=m.captains||[];captain("capcard1","capimg1","cap1","cap1team",caps[0]);captain("capcard2","capimg2","cap2","cap2team",caps[1]);set("status",m.status||"LIVE");set("crr",m.crr);set("partnership",m.partnership);set("matchtitle",m.title||"LIVE CRICKET");const b=m.batsmen||[];if(b[0]){set("bat1",b[0].name);set("bat1score",b[0].runs+" ("+b[0].balls+")")}else{set("bat1","-");set("bat1score","-")}if(b[1]){set("bat2",b[1].name);set("bat2score",b[1].runs+" ("+b[1].balls+")")}else{set("bat2","-");set("bat2score","-")}if(m.bowler){set("bowler",m.bowler.name);set("bowlerscore",m.bowler.overs+"-"+m.bowler.maidens+"-"+m.bowler.runs+"-"+m.bowler.wickets);set("bowlerstats","ECO: "+m.bowler.economy)}else{set("bowler","-");set("bowlerscore","-");set("bowlerstats","LIVE BOWLER")}set("last","LAST UPDATE: "+new Date().toLocaleTimeString())}catch(e){set("status","RETRYING LIVE DATA");set("last","Live data temporarily unavailable")}}update();setInterval(update,15000);
 </script></body></html>'''.replace("__MID__", mid_js)
     return Response(html, mimetype="text/html")
 

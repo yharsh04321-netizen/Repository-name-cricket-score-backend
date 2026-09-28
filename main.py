@@ -7,6 +7,7 @@ app = Flask(__name__)
 
 CRICBUZZ_URL = "https://www.cricbuzz.com/cricket-match/live-scores"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
+
 selected_match = None
 
 
@@ -83,7 +84,6 @@ def select_match():
         <div class="match">
             <div class="live">● LIVE / MATCH</div>
             <div class="name">{safe_name}</div>
-
             <form method="POST">
                 <input type="hidden" name="match_id" value="{safe_id}">
                 <button type="submit">SELECT THIS MATCH</button>
@@ -127,22 +127,13 @@ body {{
     color: white;
     font-family: Arial, sans-serif;
 }}
-
 .container {{
     max-width: 900px;
     margin: 40px auto;
     padding: 20px;
 }}
-
-h1 {{
-    font-size: 32px;
-}}
-
-.subtitle {{
-    color: #aaa;
-    margin-bottom: 25px;
-}}
-
+h1 {{ font-size: 32px; }}
+.subtitle {{ color: #aaa; margin-bottom: 25px; }}
 .match {{
     background: #1d1d1d;
     border: 1px solid #333;
@@ -150,20 +141,17 @@ h1 {{
     padding: 20px;
     margin-bottom: 15px;
 }}
-
 .live {{
     color: #00e676;
     font-size: 13px;
     font-weight: bold;
     margin-bottom: 10px;
 }}
-
 .name {{
     font-size: 19px;
     font-weight: bold;
     margin-bottom: 18px;
 }}
-
 button {{
     background: #00c853;
     color: white;
@@ -173,16 +161,8 @@ button {{
     font-weight: bold;
     cursor: pointer;
 }}
-
-button:hover {{
-    background: #00e676;
-}}
-
-.refresh {{
-    background: #333;
-    margin-bottom: 20px;
-}}
-
+button:hover {{ background: #00e676; }}
+.refresh {{ background: #333; margin-bottom: 20px; }}
 .selected {{
     background: #12351f;
     border: 1px solid #00c853;
@@ -190,7 +170,6 @@ button:hover {{
     padding: 20px;
     margin-bottom: 20px;
 }}
-
 .empty {{
     background: #1d1d1d;
     padding: 30px;
@@ -198,7 +177,6 @@ button:hover {{
     color: #aaa;
     border-radius: 10px;
 }}
-
 code {{
     background: #000;
     padding: 5px 8px;
@@ -208,21 +186,11 @@ code {{
 </head>
 <body>
 <div class="container">
-
 <h1>🏏 CRICKET LIVE SCORE</h1>
-
-<div class="subtitle">
-Select today's match for your OBS scoreboard.
-</div>
-
+<div class="subtitle">Select today's match for your OBS scoreboard.</div>
 {selected_html}
-
-<button class="refresh" onclick="location.reload()">
-↻ REFRESH MATCHES
-</button>
-
+<button class="refresh" onclick="location.reload()">↻ REFRESH MATCHES</button>
 {cards}
-
 </div>
 </body>
 </html>
@@ -249,7 +217,6 @@ html, body {
     overflow: hidden;
     font-family: Arial, sans-serif;
 }
-
 .scoreboard {
     position: absolute;
     left: 20px;
@@ -261,13 +228,11 @@ html, body {
     border-radius: 10px;
     font-weight: bold;
 }
-
 .live {
     color: #00e676;
     font-size: 13px;
     margin-bottom: 7px;
 }
-
 .score {
     font-size: 23px;
     line-height: 1.35;
@@ -275,12 +240,10 @@ html, body {
 </style>
 </head>
 <body>
-
 <div class="scoreboard">
     <div class="live">● LIVE CRICKET</div>
     <div id="score" class="score">Loading...</div>
 </div>
-
 <script>
 async function updateScore() {
     try {
@@ -288,7 +251,6 @@ async function updateScore() {
             '/selected-match?t=' + Date.now(),
             {cache: 'no-store'}
         );
-
         const data = await response.json();
         const score = document.getElementById('score');
 
@@ -297,7 +259,6 @@ async function updateScore() {
         } else {
             score.textContent = 'No match selected';
         }
-
     } catch (error) {
         document.getElementById('score').textContent = 'Score unavailable';
     }
@@ -306,7 +267,6 @@ async function updateScore() {
 updateScore();
 setInterval(updateScore, 15000);
 </script>
-
 </body>
 </html>
 """

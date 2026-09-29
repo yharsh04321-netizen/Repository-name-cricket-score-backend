@@ -9,7 +9,9 @@ import main
 LIVE_URL = "https://www.cricbuzz.com/api/mcenter/comm/{}"
 LIVE_CACHE = {}
 CAPTAIN_CACHE = {}
+SCORECARD_CACHE = {}
 CACHE_SECONDS = 4
+SCORECARD_CACHE_SECONDS = 8
 HEADERS = dict(main.HEADERS)
 HEADERS["User-Agent"] = "Mozilla/5.0 cricket-live-overlay/1.0"
 
@@ -37,8 +39,15 @@ def _team_matches(a, b):
         return False
     if a == b or a in b or b in a:
         return True
-    aliases = {"indiaaw": "indaw", "australiaaw": "ausaw", "indiaa": "inda", "australiaa": "ausa"}
-    return aliases.get(a, a) == aliases.get(b, b)
+    aliases = {"indiaaw": "indwa", "australiaaw": "auswa", "indiaa": "inda", "australiaa": "ausa"}
+    if aliases.get(a, a) == aliases.get(b, b):
+        return True
+    # Cricbuzz short codes such as INDWA/AUSWA versus full names.
+    prefixes = (("ind", "india"), ("aus", "australia"), ("eng", "england"), ("pak", "pakistan"), ("ban", "bangladesh"), ("afg", "afghanistan"), ("rsa", "southafrica"))
+    for code, name in prefixes:
+        if (a.startswith(code) and b.startswith(name)) or (b.startswith(code) and a.startswith(name)):
+            return True
+    return False
 
 
 def _player(obj, striker=False):
@@ -90,6 +99,43 @@ def _live_data(match):
     except Exception as exc:
         print("live center error:", repr(exc))
         return cached["data"] if cached else None
+
+
+def _scorecard_snapshot(match):
+    mid = _match_id(match)
+    now = time.time()
+    cached = SCORECARD_CACHE.get(mid)
+    if cached and now - cached["time"] < SCORECARD_CACHE_SECONDS:
+        return cached["data"]
+    try:
+        url = main.scorecard_url(match.get("url", ""))
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        text = _clean(soup.get_text(" ", strip=True))
+        data = {"text": text, "scores": main.parse_scores(text)}
+        SCORECARD_CACHE[mid] = {"time": now, "data": data}
+        return data
+    except Exception as exc:
+        print("scorecard snapshot error:", repr(exc))
+        return cached["data"] if cached else None
+
+
+def _resolve_batting_index(match, team1, team2, score, wickets, fallback):
+    snapshot = _scorecard_snapshot(match)
+    if not snapshot:
+        return fallback
+    target_runs = str(score)
+    target_wickets = str(wickets)
+    for item in snapshot.get("scores", []):
+        if str(item.get("runs")) != target_runs or str(item.get("wickets")) != target_wickets:
+            continue
+        code = item.get("code", "")
+        if _team_matches(code, team1):
+            return 0
+        if _team_matches(code, team2):
+            return 1
+    return fallback
 
 
 def _captains(match, team1, team2):
@@ -156,6 +202,11 @@ def _extract_live(match):
     else:
         code1, code2 = main.team_code(team1), main.team_code(team2)
         batting_index = 0 if _norm(batting_team) in {_norm(code1), _norm(team1)} else 1
+
+    # At innings break/stumps Cricbuzz can switch batTeam to the next innings
+    # while teamScore/teamWkts and the batsmen still describe the completed
+    # innings. The scorecard is authoritative for which team owns that score.
+    batting_index = _resolve_batting_index(match, team1, team2, score, wickets, batting_index)
 
     striker = _player(mini.get("batsmanStriker"), True)
     non_striker = _player(mini.get("batsmanNonStriker"), False)

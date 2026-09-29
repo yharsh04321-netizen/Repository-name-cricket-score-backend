@@ -76,6 +76,59 @@ def _improved_parse_players(text):
     return bats[:2], bowler
 
 
+def _extract_live_snapshot(match, html):
+    """Extract the CURRENT live innings from the top live-score block.
+
+    The full Cricbuzz page also contains older innings/scorecard data. Looking at
+    the first live block avoids accidentally displaying an earlier Test innings.
+    """
+    if not html:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    text = main.clean(soup.get_text(" ", strip=True))
+    top = text[:14000]
+
+    # Get the official short codes from the match URL, e.g. INDA/AUSA.
+    slug = re.search(r"/live-cricket-scores/\d+/([a-z0-9]+)-vs-([a-z0-9]+)", match.get("url", ""), re.I)
+    codes = [x.upper() for x in slug.groups()] if slug else []
+    if len(codes) != 2:
+        return None
+
+    found = []
+    for idx, code in enumerate(codes):
+        pat = rf"\b{re.escape(code)}\s+(\d{{1,4}})\s*-\s*(\d{{1,2}})\s*\(\s*(\d+(?:\.\d+)?)\s*\)"
+        m = re.search(pat, top, re.I)
+        if m:
+            found.append((idx, code, m))
+
+    if not found:
+        return None
+
+    # In the live block only one team has the active score with overs in
+    # parentheses. Prefer the first occurrence in the page.
+    idx, code, score_match = min(found, key=lambda x: x[2].start())
+    runs, wickets, overs = score_match.group(1), score_match.group(2), score_match.group(3)
+    window = top[score_match.start():score_match.start() + 1800]
+
+    crr = None
+    partnership = None
+    m = re.search(r"\bCRR\s*[: ]\s*([0-9]+(?:\.[0-9]+)?)", window, re.I)
+    if m:
+        crr = m.group(1)
+    m = re.search(r"P['’]?SHIP\s*[: ]\s*([0-9]+(?:\([0-9.]+\))?)", window, re.I)
+    if m:
+        partnership = m.group(1)
+
+    return {
+        "batting_index": idx,
+        "team_code": code,
+        "score": f"{runs}-{wickets}",
+        "overs": overs,
+        "crr": crr,
+        "partnership": partnership,
+    }
+
+
 def _apply_live_api_striker(match, batsmen):
     """Use Cricbuzz's live commentary API to identify the actual current striker."""
     if not batsmen:
@@ -97,8 +150,6 @@ def _apply_live_api_striker(match, batsmen):
         names = {main.norm_name(b.get("name", "")): b for b in batsmen if b.get("name")}
         striker_name = ""
         live_bowler = None
-        # Cricbuzz normally returns newest commentary first. Search until we find
-        # a delivery that explicitly contains a current batter.
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -137,16 +188,39 @@ main.parse_players = _improved_parse_players
 def _patched_fetch_match_detail(match):
     data = _original_fetch(match)
 
-    scores = []
-    for key in ("team1_score", "team2_score"):
-        s = str(data.get(key, ""))
-        if re.match(r"^\d+-\d+$", s):
-            scores.append(key)
-    data["batting_index"] = 1 if len(scores) >= 2 else 0
-    data["bowling_index"] = 0 if data["batting_index"] == 1 else 1
+    # IMPORTANT: refresh the CURRENT live innings from the live-score page.
+    # The normal scorecard page contains multiple Test innings and can make the
+    # scoreboard appear stuck on an older innings.
+    try:
+        live_url = match.get("url", "")
+        r_live = requests.get(live_url, headers=main.HEADERS, timeout=12)
+        r_live.raise_for_status()
+        snapshot = _extract_live_snapshot(match, r_live.text)
+        if snapshot:
+            idx = snapshot["batting_index"]
+            data["batting_index"] = idx
+            data["bowling_index"] = 0 if idx == 1 else 1
+            data[f"team{idx + 1}_score"] = snapshot["score"]
+            data[f"team{idx + 1}_overs"] = snapshot["overs"]
+            if snapshot.get("crr"):
+                data["crr"] = snapshot["crr"]
+            if snapshot.get("partnership"):
+                data["partnership"] = snapshot["partnership"]
+            data["status"] = "LIVE"
+    except Exception as exc:
+        print("live score refresh error:", exc)
 
+    if "batting_index" not in data:
+        scores = []
+        for key in ("team1_score", "team2_score"):
+            s = str(data.get(key, ""))
+            if re.match(r"^\d+-\d+$", s):
+                scores.append(key)
+        data["batting_index"] = 1 if len(scores) >= 2 else 0
+        data["bowling_index"] = 0 if data["batting_index"] == 1 else 1
+
+    idx = data["batting_index"]
     if not data.get("crr") or data.get("crr") == "-":
-        idx = data["batting_index"]
         score = str(data.get("team%d_score" % (idx + 1), ""))
         overs = str(data.get("team%d_overs" % (idx + 1), ""))
         sm = re.match(r"^(\d+)-\d+$", score)
@@ -156,6 +230,7 @@ def _patched_fetch_match_detail(match):
             if balls:
                 data["crr"] = f"{int(sm.group(1)) / (balls / 6):.2f}"
 
+    # Use the scorecard HTML for the two current batters.
     url = match.get("url", "").replace("/live-cricket-scores/", "/live-cricket-scorecard/")
     try:
         r = requests.get(url, headers=main.HEADERS, timeout=10)

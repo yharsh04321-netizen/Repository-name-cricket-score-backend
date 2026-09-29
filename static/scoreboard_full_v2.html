@@ -79,12 +79,14 @@ function render(m){
  const b=m.batsmen||[],c=m.captains||[],bo=m.bowler,b1=b[0]||{},b2=b[1]||{},bi=Number.isInteger(m.batting_index)?m.batting_index:0,bowli=bi===1?0:1;
  const battingTeam=bi===0?m.team1:m.team2,bowlingTeam=bowli===0?m.team1:m.team2;
  const battingFlag=bi===0?m.team1_flag||'🏳️':m.team2_flag||'🏳️',bowlingFlag=bowli===0?m.team1_flag||'🏳️':m.team2_flag||'🏳️';
+ const battingCaptain=bi===0?c[0]:c[1],bowlingCaptain=bowli===0?c[0]:c[1];
+ const battingCode=bi===0?m.team1_code:m.team2_code,bowlingCode=bowli===0?m.team1_code:m.team2_code;
  const batScore=bi===0?m.team1_score:m.team2_score,batOvers=bi===0?m.team1_overs:m.team2_overs;
  const strike1=!!b1.striker,strike2=!!b2.striker;
  document.getElementById('board').innerHTML=`
  <div class="hero">
   <div class="side"><div class="flag">${esc(battingFlag)}</div><div><div class="team">${esc(battingTeam||'TEAM 1')}</div><div class="score">${esc(batScore||'-')}</div><div class="overs">${esc(batOvers?batOvers+' OVERS':'')}</div></div></div>
-  <div class="middle"><div class="battle">CAPTAINS BATTLE</div><div class="versus">VS</div><div class="captains">${cap(c[0],0,m.team1,m.team1_code,m.team1_flag)}<div class="vs-badge">VS</div>${cap(c[1],1,m.team2,m.team2_code,m.team2_flag)}</div><div class="status">${esc(m.status||'LIVE')}</div></div>
+  <div class="middle"><div class="battle">CAPTAINS BATTLE</div><div class="versus">VS</div><div class="captains">${cap(battingCaptain,0,battingTeam,battingCode,battingFlag)}<div class="vs-badge">VS</div>${cap(bowlingCaptain,1,bowlingTeam,bowlingCode,bowlingFlag)}</div><div class="status">${esc(m.status||'LIVE')}</div></div>
   <div class="side right"><div><div class="team">${esc(bowlingTeam||'TEAM 2')}</div><div class="bowling-label">BOWLING</div></div><div class="flag">${esc(bowlingFlag)}</div></div>
  </div>
  <div class="info"><div>CRR: <b>${esc(m.crr||'-')}</b></div><div>P'SHIP: <b>${esc(m.partnership||'-')}</b></div><div>${esc(battingTeam||'')} BATTING</div></div>

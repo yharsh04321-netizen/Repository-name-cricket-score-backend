@@ -42,7 +42,6 @@ def _team_matches(a, b):
     aliases = {"indiaaw": "indwa", "australiaaw": "auswa", "indiaa": "inda", "australiaa": "ausa"}
     if aliases.get(a, a) == aliases.get(b, b):
         return True
-    # Cricbuzz short codes such as INDWA/AUSWA versus full names.
     prefixes = (("ind", "india"), ("aus", "australia"), ("eng", "england"), ("pak", "pakistan"), ("ban", "bangladesh"), ("afg", "afghanistan"), ("rsa", "southafrica"))
     for code, name in prefixes:
         if (a.startswith(code) and b.startswith(name)) or (b.startswith(code) and a.startswith(name)):
@@ -75,11 +74,94 @@ def _match_id(match):
 
 def _latest_commentary_items(payload):
     items = []
+    if not isinstance(payload, dict):
+        return items
     for key in ("matchCommentary", "commentaryList"):
-        value = payload.get(key) if isinstance(payload, dict) else None
-        if isinstance(value, list):
-            items.extend(x for x in value if isinstance(x, dict))
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        for x in value:
+            if not isinstance(x, dict):
+                continue
+            nested = x.get("commentaryList")
+            if isinstance(nested, list):
+                items.extend(y for y in nested if isinstance(y, dict))
+            else:
+                items.append(x)
     return sorted(items, key=lambda x: x.get("timestamp", 0), reverse=True)
+
+
+def _event_label(item):
+    event = _clean(item.get("event", "")).upper()
+    text = _clean(item.get("commText", item.get("commentary", ""))).lower()
+    try:
+        total = int(item.get("totalRuns", 0) or 0)
+    except Exception:
+        total = 0
+    if "WIDE" in event or "WIDE" in text or re.search(r"\bwd\b", event):
+        return "WD" if total <= 1 else f"WD+{total}"
+    if "NO_BALL" in event or "NOBALL" in event or "NO BALL" in text:
+        return "NB" if total <= 1 else f"NB+{total - 1}"
+    if "SIX" in event or "six" in text:
+        return "6"
+    if "FOUR" in event or "four" in text:
+        return "4"
+    if "WICKET" in event or "wicket" in text:
+        return "W" if total == 0 else f"W+{total}"
+    if "LEG_BYE" in event or "LEG-BYE" in event:
+        return f"LB{total}"
+    if "BYE" in event:
+        return f"B{total}"
+    if total in (0, 1, 2, 3):
+        return str(total)
+    return str(total)
+
+
+def _current_over_data(payload):
+    items = _latest_commentary_items(payload)
+    deliveries = []
+    for item in items:
+        ov = item.get("overNumber", item.get("overNum"))
+        try:
+            ovf = float(ov)
+        except (TypeError, ValueError):
+            continue
+        if ovf < 0 or not item.get("ballNbr", 0):
+            continue
+        deliveries.append((ovf, item))
+    if not deliveries:
+        return {"over": "", "balls": [], "free_hit": False, "last_ball": ""}
+
+    newest_over = max(x[0] for x in deliveries)
+    over_floor = int(newest_over)
+    current = [(ov, item) for ov, item in deliveries if int(ov) == over_floor]
+    current.sort(key=lambda x: (x[0], x[1].get("ballNbr", 0), x[1].get("timestamp", 0)))
+    # Keep the six most recent delivery events available in the feed. Extras
+    # remain visible as WD/NB without pretending they are legal balls.
+    current = current[-6:]
+    balls = []
+    previous_no_ball = False
+    for ov, item in current:
+        label = _event_label(item)
+        event = _clean(item.get("event", "")).upper()
+        is_no_ball = "NO_BALL" in event or "NOBALL" in event or "NO BALL" in _clean(item.get("commText", "")).upper()
+        free_hit = previous_no_ball
+        balls.append({
+            "label": label,
+            "ball": str(item.get("ballNbr", "")),
+            "over_ball": str(ov).rstrip("0").rstrip("."),
+            "free_hit": free_hit,
+        })
+        previous_no_ball = is_no_ball
+
+    last = balls[-1] if balls else {}
+    over_number = over_floor + 1
+    free_hit = bool(last.get("free_hit"))
+    if current:
+        latest_text = _clean(current[-1][1].get("commText", ""))
+        if "free hit" in latest_text.lower():
+            free_hit = True
+    return {"over": str(over_number), "balls": balls, "free_hit": free_hit, "last_ball": last.get("label", "")}
 
 
 def _live_data(match):
@@ -244,7 +326,8 @@ def _extract_live(match):
         partnership = str(partnership)
 
     crr = mini.get("currentRunRate", mini.get("crr", "-"))
-    result = {"title": f"{team1} vs {team2}", "url": match.get("url", ""), "team1": team1, "team2": team2, "team1_code": main.team_code(team1), "team2_code": main.team_code(team2), "team1_flag": main.team_flag(team1), "team2_flag": main.team_flag(team2), "team1_score": "-", "team2_score": "-", "team1_overs": "", "team2_overs": "", "crr": str(crr), "partnership": partnership, "status": _clean(mini.get("status") or header.get("status") or "LIVE"), "batsmen": batsmen[:2], "bowler": live_bowler, "captains": _captains(match, team1, team2), "batting_index": batting_index, "bowling_index": 1 - batting_index}
+    current_over = _current_over_data(payload)
+    result = {"title": f"{team1} vs {team2}", "url": match.get("url", ""), "team1": team1, "team2": team2, "team1_code": main.team_code(team1), "team2_code": main.team_code(team2), "team1_flag": main.team_flag(team1), "team2_flag": main.team_flag(team2), "team1_score": "-", "team2_score": "-", "team1_overs": "", "team2_overs": "", "crr": str(crr), "partnership": partnership, "status": _clean(mini.get("status") or header.get("status") or "LIVE"), "batsmen": batsmen[:2], "bowler": live_bowler, "captains": _captains(match, team1, team2), "batting_index": batting_index, "bowling_index": 1 - batting_index, "current_over": current_over}
     result[f"team{batting_index + 1}_score"] = f"{score}-{wickets}"
     result[f"team{batting_index + 1}_overs"] = str(overs)
     return result
@@ -252,7 +335,7 @@ def _extract_live(match):
 
 def _fallback_detail(match):
     t1, t2 = main.extract_teams(match.get("name", ""))
-    return {"title": match.get("name", "CRICKET"), "url": match.get("url", ""), "team1": t1, "team2": t2, "team1_code": main.team_code(t1), "team2_code": main.team_code(t2), "team1_flag": main.team_flag(t1), "team2_flag": main.team_flag(t2), "team1_score": "-", "team2_score": "-", "team1_overs": "", "team2_overs": "", "crr": "-", "partnership": "-", "status": "DATA RETRYING", "batsmen": [], "bowler": None, "captains": _captains(match, t1, t2), "batting_index": 0, "bowling_index": 1}
+    return {"title": match.get("name", "CRICKET"), "url": match.get("url", ""), "team1": t1, "team2": t2, "team1_code": main.team_code(t1), "team2_code": main.team_code(t2), "team1_flag": main.team_flag(t1), "team2_flag": main.team_flag(t2), "team1_score": "-", "team2_score": "-", "team1_overs": "", "team2_overs": "", "crr": "-", "partnership": "-", "status": "DATA RETRYING", "batsmen": [], "bowler": None, "captains": _captains(match, t1, t2), "batting_index": 0, "bowling_index": 1, "current_over": {"over": "", "balls": [], "free_hit": False, "last_ball": ""}}
 
 
 def _fetch_match_detail(match):
@@ -269,6 +352,47 @@ def _scoreboard_full():
     try:
         with open("static/scoreboard_full_v2.html", "r", encoding="utf-8") as f:
             html = f.read()
+        enhancement = r'''<style>
+.current-over{margin-top:.75vw;padding:.55vw .55vw .5vw;border-radius:12px;background:rgba(35,4,18,.34);border:1px solid rgba(255,255,255,.18);box-shadow:inset 0 0 14px rgba(0,0,0,.12)}
+.current-over-head{display:flex;align-items:center;justify-content:space-between;gap:.5vw;font-size:clamp(10px,.8vw,17px);font-weight:1000;letter-spacing:.04em;text-transform:uppercase}
+.current-over-title{color:#fff}.current-over-free{color:#ffe13a;animation:strikePulse 1.2s ease-in-out infinite}
+.over-balls{display:flex;gap:.28vw;margin-top:.4vw;overflow:hidden}.over-ball{min-width:clamp(25px,2.15vw,43px);height:clamp(25px,2.15vw,43px);padding:0 .28vw;border-radius:7px;background:#101b2a;border:1px solid rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;font-size:clamp(10px,.82vw,17px);font-weight:1000;color:#fff}.over-ball.boundary{background:#ffd21a;color:#4d0710}.over-ball.extra{background:#fff;color:#8b1027}.over-ball.wicket{background:#101010;color:#ff5d70}.over-ball.freehit{outline:2px solid #ffe13a;outline-offset:1px}.last-ball{margin-top:.35vw;font-size:clamp(9px,.68vw,14px);font-weight:800;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:700px){.current-over{margin-top:1vw}.over-balls{gap:.4vw}.over-ball{min-width:6.3vw;height:6.3vw}}
+</style><script>
+(function(){
+ let latest=null;
+ const originalFetch=window.fetch;
+ window.fetch=async function(){
+   const response=await originalFetch.apply(this,arguments);
+   try{
+     const url=String(arguments[0]||'');
+     if(url.indexOf('/selected-score?')!==-1){
+       response.clone().json().then(function(data){latest=data&&data.match?data.match:null;decorate();}).catch(function(){});
+     }
+   }catch(e){}
+   return response;
+ };
+ function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]});}
+ function decorate(){
+   if(!latest)return;
+   const card=document.querySelector('.card.bowl');
+   if(!card)return;
+   let box=card.querySelector('.current-over');
+   if(!box){box=document.createElement('div');box.className='current-over';const sub=card.querySelector('.sub');card.insertBefore(box,sub||null);}
+   const co=latest.current_over||{};
+   const balls=Array.isArray(co.balls)?co.balls:[];
+   const html=balls.map(function(b){
+     const l=String(b.label||'');
+     const cls='over-ball '+(l==='4'||l==='6'?'boundary ':'')+((l.indexOf('WD')===0||l.indexOf('NB')===0||l.indexOf('B')===0||l.indexOf('LB')===0)?'extra ':'')+(l.indexOf('W')===0?'wicket ':'')+(b.free_hit?'freehit':'');
+     return '<span class="'+cls+'">'+esc(l)+'</span>';
+   }).join('');
+   box.innerHTML='<div class="current-over-head"><span class="current-over-title">CURRENT OVER '+esc(co.over?'• '+co.over:'')+'</span>'+(co.free_hit?'<span class="current-over-free">FREE HIT</span>':'')+'</div><div class="over-balls">'+(html||'<span class="over-ball">—</span>')+'</div>'+(co.last_ball?'<div class="last-ball">LAST BALL: '+esc(co.last_ball)+'</div>':'');
+ }
+ new MutationObserver(function(){decorate();}).observe(document.documentElement,{childList:true,subtree:true});
+ setInterval(decorate,1000);
+})();
+</script>'''
+        html = html.replace("</head>", enhancement + "</head>")
         return Response(html, mimetype="text/html")
     except Exception as exc:
         return Response("Scoreboard template error: " + str(exc), status=500, mimetype="text/plain")

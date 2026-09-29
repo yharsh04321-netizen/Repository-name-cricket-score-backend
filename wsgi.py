@@ -19,10 +19,9 @@ def _parse_dom_players(html):
     batsmen=[]
     for row in inning.select("div.cb-scrd-itms"):
         values=[_text(c) for c in row.find_all("div",recursive=False)]
-        row_text=_text(row)
         if len(values)>=7 and values[2].isdigit() and values[3].isdigit():
             if values[0].lower() in {"batsman","batting","bowler","bowling","extras","total"}: continue
-            batsmen.append({"name":values[0].replace("*","").strip(),"runs":values[2],"balls":values[3],"striker":"*" in values[0] or re.search(r"\bbatting\b",row_text,re.I) is not None})
+            batsmen.append({"name":values[0].replace("*","").strip(),"runs":values[2],"balls":values[3],"striker":"*" in values[0]})
     if batsmen:
         batsmen=batsmen[-2:]
     bowler=None
@@ -59,12 +58,14 @@ def _improved_parse_players(text):
 
 def _infer_striker_from_live(match, batsmen):
     """Use the latest Cricbuzz delivery to identify the current striker.
-    If the scorecard already exposes a striker marker, keep it. Otherwise the
-    latest 'to Batter' commentary plus the delivery outcome is used to decide
-    whether that batter or the other batter is facing the next ball.
+    If the scorecard already exposes exactly one striker marker, keep it.
+    Otherwise the latest 'to Batter' commentary plus delivery outcome decides
+    whether that batter or the other batter faces the next ball.
     """
-    if not batsmen or any(bool(b.get("striker")) for b in batsmen):
+    if not batsmen or sum(bool(b.get("striker")) for b in batsmen)==1:
         return
+    if sum(bool(b.get("striker")) for b in batsmen)>1:
+        for b in batsmen: b["striker"]=False
     live_url=match.get("url","").replace("/live-cricket-scorecard/","/live-cricket-scores/")
     if not live_url:
         return
@@ -83,10 +84,8 @@ def _infer_striker_from_live(match, batsmen):
         if not latest:
             return
         _,delivery,name,snippet=latest
-        over_no,ball_no=[int(x) for x in delivery.split(".")]
+        _,ball_no=[int(x) for x in delivery.split(".")]
         s=snippet.lower()
-        # End of an over always changes strike. Otherwise odd completed runs
-        # change strike; boundaries, dots and even runs keep it unchanged.
         odd_run=bool(re.search(r"\b(?:1|3|5)\s+runs?\b|\bsingle\b",s))
         end_over=(ball_no==6)
         switch=odd_run ^ end_over
@@ -120,9 +119,6 @@ def _patched_fetch_match_detail(match):
             balls=int(om.group(1))*6+int(om.group(2) or 0)
             if balls: data["crr"]=f"{int(sm.group(1))/(balls/6):.2f}"
 
-    # Prefer structured Cricbuzz scorecard rows whenever available. This keeps
-    # the current batting pair and bowling figures accurate even when the text
-    # parser has already found partial player data.
     url=match.get("url","").replace("/live-cricket-scores/","/live-cricket-scorecard/")
     try:
         r=requests.get(url,headers=main.HEADERS,timeout=10); r.raise_for_status()

@@ -22,12 +22,7 @@ def _parse_dom_players(html):
         if len(values) >= 7 and values[2].isdigit() and values[3].isdigit():
             if values[0].lower() in {"batsman", "batting", "bowler", "bowling", "extras", "total"}:
                 continue
-            batsmen.append({
-                "name": values[0].replace("*", "").strip(),
-                "runs": values[2],
-                "balls": values[3],
-                "striker": "*" in values[0],
-            })
+            batsmen.append({"name": values[0].replace("*", "").strip(), "runs": values[2], "balls": values[3], "striker": "*" in values[0]})
     if batsmen:
         batsmen = batsmen[-2:]
     bowler = None
@@ -35,14 +30,7 @@ def _parse_dom_players(html):
     for row in reversed(rows):
         values = [_text(c) for c in row.find_all("div", recursive=False)]
         if len(values) >= 5 and re.match(r"^\d+(?:\.\d+)?$", values[1]):
-            bowler = {
-                "name": values[0],
-                "overs": values[1],
-                "maidens": values[2],
-                "runs": values[3],
-                "wickets": values[4],
-                "economy": values[5] if len(values) > 5 else "",
-            }
+            bowler = {"name": values[0], "overs": values[1], "maidens": values[2], "runs": values[3], "wickets": values[4], "economy": values[5] if len(values) > 5 else ""}
             break
     return batsmen, bowler
 
@@ -77,18 +65,11 @@ def _improved_parse_players(text):
 
 
 def _extract_live_snapshot(match, html):
-    """Extract the CURRENT live innings from the top live-score block.
-
-    The full Cricbuzz page also contains older innings/scorecard data. Looking at
-    the first live block avoids accidentally displaying an earlier Test innings.
-    """
     if not html:
         return None
     soup = BeautifulSoup(html, "html.parser")
     text = main.clean(soup.get_text(" ", strip=True))
     top = text[:14000]
-
-    # Get the official short codes from the match URL, e.g. INDA/AUSA.
     slug = re.search(r"/live-cricket-scores/\d+/([a-z0-9]+)-vs-([a-z0-9]+)", match.get("url", ""), re.I)
     codes = [x.upper() for x in slug.groups()] if slug else []
     if len(codes) != 2:
@@ -96,20 +77,16 @@ def _extract_live_snapshot(match, html):
 
     found = []
     for idx, code in enumerate(codes):
-        pat = rf"\b{re.escape(code)}\s+(\d{{1,4}})\s*-\s*(\d{{1,2}})\s*\(\s*(\d+(?:\.\d+)?)\s*\)"
+        pat = rf"\b{re.escape(code)}(?:\s*\(\s*\d+(?:st|nd|rd|th)?\s+Inn(?:ings)?\s*\))?\s+(\d{{1,4}})\s*-\s*(\d{{1,2}})\s*\(\s*(\d+(?:\.\d+)?)\s*\)"
         m = re.search(pat, top, re.I)
         if m:
             found.append((idx, code, m))
-
     if not found:
         return None
 
-    # In the live block only one team has the active score with overs in
-    # parentheses. Prefer the first occurrence in the page.
     idx, code, score_match = min(found, key=lambda x: x[2].start())
     runs, wickets, overs = score_match.group(1), score_match.group(2), score_match.group(3)
     window = top[score_match.start():score_match.start() + 1800]
-
     crr = None
     partnership = None
     m = re.search(r"\bCRR\s*[: ]\s*([0-9]+(?:\.[0-9]+)?)", window, re.I)
@@ -118,19 +95,10 @@ def _extract_live_snapshot(match, html):
     m = re.search(r"P['’]?SHIP\s*[: ]\s*([0-9]+(?:\([0-9.]+\))?)", window, re.I)
     if m:
         partnership = m.group(1)
-
-    return {
-        "batting_index": idx,
-        "team_code": code,
-        "score": f"{runs}-{wickets}",
-        "overs": overs,
-        "crr": crr,
-        "partnership": partnership,
-    }
+    return {"batting_index": idx, "team_code": code, "score": f"{runs}-{wickets}", "overs": overs, "crr": crr, "partnership": partnership}
 
 
 def _apply_live_api_striker(match, batsmen):
-    """Use Cricbuzz's live commentary API to identify the actual current striker."""
     if not batsmen:
         return None
     match_url = match.get("url", "")
@@ -146,7 +114,6 @@ def _apply_live_api_striker(match, batsmen):
         items = payload.get("commentaryList") if isinstance(payload, dict) else None
         if not isinstance(items, list):
             return None
-
         names = {main.norm_name(b.get("name", "")): b for b in batsmen if b.get("name")}
         striker_name = ""
         live_bowler = None
@@ -159,19 +126,10 @@ def _apply_live_api_striker(match, batsmen):
                 striker_name = candidate
                 bow = item.get("bowlerStriker") or {}
                 if bow.get("bowlName"):
-                    live_bowler = {
-                        "name": main.clean(bow.get("bowlName")),
-                        "overs": str(bow.get("bowlOvs", "")),
-                        "maidens": str(bow.get("bowlMaidens", "")),
-                        "runs": str(bow.get("bowlRuns", "")),
-                        "wickets": str(bow.get("bowlWkts", "")),
-                        "economy": str(bow.get("bowlEcon", "")),
-                    }
+                    live_bowler = {"name": main.clean(bow.get("bowlName")), "overs": str(bow.get("bowlOvs", "")), "maidens": str(bow.get("bowlMaidens", "")), "runs": str(bow.get("bowlRuns", "")), "wickets": str(bow.get("bowlWkts", "")), "economy": str(bow.get("bowlEcon", ""))}
                 break
-
         if not striker_name:
             return live_bowler
-
         target = main.norm_name(striker_name)
         for b in batsmen:
             b["striker"] = main.norm_name(b.get("name", "")) == target
@@ -187,10 +145,6 @@ main.parse_players = _improved_parse_players
 
 def _patched_fetch_match_detail(match):
     data = _original_fetch(match)
-
-    # IMPORTANT: refresh the CURRENT live innings from the live-score page.
-    # The normal scorecard page contains multiple Test innings and can make the
-    # scoreboard appear stuck on an older innings.
     try:
         live_url = match.get("url", "")
         r_live = requests.get(live_url, headers=main.HEADERS, timeout=12)
@@ -230,7 +184,6 @@ def _patched_fetch_match_detail(match):
             if balls:
                 data["crr"] = f"{int(sm.group(1)) / (balls / 6):.2f}"
 
-    # Use the scorecard HTML for the two current batters.
     url = match.get("url", "").replace("/live-cricket-scores/", "/live-cricket-scorecard/")
     try:
         r = requests.get(url, headers=main.HEADERS, timeout=10)

@@ -7,6 +7,7 @@ LIVE_URL = "https://www.cricbuzz.com/api/mcenter/comm/{}"
 HEADERS = dict(main.HEADERS)
 HEADERS["User-Agent"] = "Mozilla/5.0 cricket-live-overlay/1.0"
 CAPTAIN_CACHE = {}
+ORIGINAL_FETCH = main.fetch_match_detail
 
 
 def clean_name(value):
@@ -23,7 +24,6 @@ def team_matches(a, b):
         return False
     if a == b or a in b or b in a:
         return True
-    # Cricbuzz short names commonly look like INDA/AUSA for India A/Australia A.
     aa = a.replace("indiaa", "inda").replace("australiaa", "ausa")
     bb = b.replace("indiaa", "inda").replace("australiaa", "ausa")
     return aa == bb
@@ -46,12 +46,7 @@ def player_dict(obj, striker=False):
         return None
     runs = obj.get("runs", obj.get("batRuns", obj.get("r", 0)))
     balls = obj.get("balls", obj.get("batBalls", obj.get("b", 0)))
-    return {
-        "name": clean_name(name),
-        "runs": str(runs),
-        "balls": str(balls),
-        "striker": bool(striker),
-    }
+    return {"name": clean_name(name), "runs": str(runs), "balls": str(balls), "striker": bool(striker)}
 
 
 def bowler_dict(obj):
@@ -65,14 +60,7 @@ def bowler_dict(obj):
     runs = obj.get("runs", obj.get("bowlRuns", obj.get("r", 0)))
     wickets = obj.get("wickets", obj.get("bowlWkts", obj.get("w", 0)))
     economy = obj.get("economy", obj.get("bowlEcon", obj.get("eco", "")))
-    return {
-        "name": clean_name(name),
-        "overs": str(overs),
-        "maidens": str(maidens),
-        "runs": str(runs),
-        "wickets": str(wickets),
-        "economy": str(economy),
-    }
+    return {"name": clean_name(name), "overs": str(overs), "maidens": str(maidens), "runs": str(runs), "wickets": str(wickets), "economy": str(economy)}
 
 
 def captain_data(team1, team2, match_url):
@@ -82,8 +70,6 @@ def captain_data(team1, team2, match_url):
         return cached["data"]
 
     caps = []
-    # First use the existing Cricbuzz profile/image parser once, then put the
-    # players onto their correct team instead of trusting page order.
     try:
         r = requests.get(main.scorecard_url(match_url), headers=HEADERS, timeout=12)
         r.raise_for_status()
@@ -92,18 +78,15 @@ def captain_data(team1, team2, match_url):
     except Exception:
         caps = []
 
-    # This fixture's announced multi-day leadership is known: Padikkal for
-    # India A; Handscomb captained Australia A in the tour's first four-day match.
-    # Keep the mapping team-aware so the cards never swap sides.
     if "india" in norm(team1) and "australia" in norm(team2):
-        desired = [("Devdutt Padikkal", 0), ("Peter Handscomb", 1)]
+        desired = ["Devdutt Padikkal", "Peter Handscomb"]
     elif "australia" in norm(team1) and "india" in norm(team2):
-        desired = [("Peter Handscomb", 0), ("Devdutt Padikkal", 1)]
+        desired = ["Peter Handscomb", "Devdutt Padikkal"]
     else:
         desired = []
 
     result = []
-    for wanted, side in desired:
+    for wanted in desired:
         found = next((c for c in caps if norm(c.get("name")) == norm(wanted)), None)
         if not found:
             found = {"name": wanted, "image": "https://ui-avatars.com/api/?name=" + requests.utils.quote(wanted) + "&size=256&background=15263c&color=ffffff&bold=true&format=png"}
@@ -111,7 +94,6 @@ def captain_data(team1, team2, match_url):
 
     if not result:
         result = caps[:2]
-
     CAPTAIN_CACHE[key] = {"time": time.time(), "data": result}
     return result
 
@@ -120,26 +102,14 @@ def fixed_fetch_match_detail(match):
     match_id = str(match["id"])
     team1, team2 = main.extract_teams(match.get("name", ""))
     result = {
-        "title": match.get("name", "CRICKET"),
-        "url": match.get("url", ""),
-        "team1": team1,
-        "team2": team2,
-        "team1_code": main.team_code(team1),
-        "team2_code": main.team_code(team2),
-        "team1_flag": main.team_flag(team1),
-        "team2_flag": main.team_flag(team2),
-        "team1_score": "-",
-        "team2_score": "-",
-        "team1_overs": "",
-        "team2_overs": "",
-        "crr": "-",
-        "partnership": "-",
-        "status": "LIVE DATA TEMPORARILY UNAVAILABLE",
-        "batsmen": [],
-        "bowler": None,
-        "captains": [],
+        "title": match.get("name", "CRICKET"), "url": match.get("url", ""),
+        "team1": team1, "team2": team2,
+        "team1_code": main.team_code(team1), "team2_code": main.team_code(team2),
+        "team1_flag": main.team_flag(team1), "team2_flag": main.team_flag(team2),
+        "team1_score": "-", "team2_score": "-", "team1_overs": "", "team2_overs": "",
+        "crr": "-", "partnership": "-", "status": "LIVE DATA TEMPORARILY UNAVAILABLE",
+        "batsmen": [], "bowler": None, "captains": []
     }
-
     try:
         r = requests.get(LIVE_URL.format(match_id), headers=HEADERS, timeout=12)
         r.raise_for_status()
@@ -147,7 +117,6 @@ def fixed_fetch_match_detail(match):
         mini = data.get("miniscore") or {}
         header = data.get("matchHeader") or {}
 
-        # Prefer the live endpoint's team metadata over parsing old scorecard text.
         header_teams = []
         for key in ("team1", "team2"):
             obj = header.get(key)
@@ -157,12 +126,7 @@ def fixed_fetch_match_detail(match):
                     header_teams.append(n)
         if len(header_teams) >= 2:
             team1, team2 = header_teams[0], header_teams[1]
-            result.update({
-                "team1": team1, "team2": team2,
-                "team1_code": main.team_code(team1), "team2_code": main.team_code(team2),
-                "team1_flag": main.team_flag(team1), "team2_flag": main.team_flag(team2),
-                "title": f"{team1} vs {team2}",
-            })
+            result.update({"team1": team1, "team2": team2, "team1_code": main.team_code(team1), "team2_code": main.team_code(team2), "team1_flag": main.team_flag(team1), "team2_flag": main.team_flag(team2), "title": f"{team1} vs {team2}"})
 
         bat_team_obj = mini.get("batTeam") or {}
         batting_team = team_name_from_obj(mini.get("batTeamScoreObj")) or team_name_from_obj(bat_team_obj)
@@ -175,19 +139,15 @@ def fixed_fetch_match_detail(match):
         if score is not None and wickets is not None:
             score_text = f"{score}-{wickets}"
             if team_matches(batting_team, team1):
-                result["team1_score"] = score_text
-                result["team1_overs"] = str(overs)
+                result["team1_score"], result["team1_overs"] = score_text, str(overs)
             elif team_matches(batting_team, team2):
-                result["team2_score"] = score_text
-                result["team2_overs"] = str(overs)
+                result["team2_score"], result["team2_overs"] = score_text, str(overs)
             else:
-                # Fallback to the endpoint's known batting team code/name.
-                if str(batting_team).upper() in {result["team1_code"].upper(), result["team1_code"].upper().replace("A", "") + "A"}:
-                    result["team1_score"] = score_text
-                    result["team1_overs"] = str(overs)
+                # For short codes such as INDA/AUSA, use the side code as a final fallback.
+                if norm(batting_team) == norm(result["team1_code"]):
+                    result["team1_score"], result["team1_overs"] = score_text, str(overs)
                 else:
-                    result["team2_score"] = score_text
-                    result["team2_overs"] = str(overs)
+                    result["team2_score"], result["team2_overs"] = score_text, str(overs)
 
         crr = mini.get("currentRunRate", mini.get("crr"))
         if crr is not None:
@@ -202,36 +162,21 @@ def fixed_fetch_match_detail(match):
         elif partnership not in (None, ""):
             result["partnership"] = str(partnership)
 
-        status = mini.get("status") or header.get("status") or "LIVE"
-        result["status"] = main.clean(status)
-
-        striker = player_dict(mini.get("batsmanStriker"), True)
-        non_striker = player_dict(mini.get("batsmanNonStriker"), False)
-        result["batsmen"] = [p for p in (striker, non_striker) if p]
-
-        bowler = mini.get("bowlerStriker") or mini.get("bowler") or mini.get("currentBowler")
-        result["bowler"] = bowler_dict(bowler)
-
+        result["status"] = main.clean(mini.get("status") or header.get("status") or "LIVE")
+        result["batsmen"] = [p for p in (player_dict(mini.get("batsmanStriker"), True), player_dict(mini.get("batsmanNonStriker"), False)) if p]
+        result["bowler"] = bowler_dict(mini.get("bowlerStriker") or mini.get("bowler") or mini.get("currentBowler"))
         result["captains"] = captain_data(team1, team2, match.get("url", ""))
         return result
     except Exception as e:
         print("livefix error:", repr(e))
-        # If the new live endpoint is temporarily unavailable, retain the old
-        # parser as a fallback rather than breaking the OBS overlay.
         try:
-            return main.fetch_match_detail(match)
+            return ORIGINAL_FETCH(match)
         except Exception:
             return result
 
 
-# The existing Flask route calls main.fetch_match_detail. Replace that function
-# without touching the existing 29k-line scoreboard template.
 main.fetch_match_detail = fixed_fetch_match_detail
 app = main.app
-
-# The existing browser overlay was polling every 15 seconds. Cricbuzz's public
-# live feed refreshes on roughly a 5-second cadence, so make the overlay poll at
-# the same pace while preserving all existing design/animation code.
 _original_scoreboard = app.view_functions.get("scoreboard")
 
 

@@ -19,9 +19,10 @@ def _parse_dom_players(html):
     batsmen=[]
     for row in inning.select("div.cb-scrd-itms"):
         values=[_text(c) for c in row.find_all("div",recursive=False)]
+        row_text=_text(row)
         if len(values)>=7 and values[2].isdigit() and values[3].isdigit():
             if values[0].lower() in {"batsman","batting","bowler","bowling","extras","total"}: continue
-            batsmen.append({"name":values[0].replace("*","").strip(),"runs":values[2],"balls":values[3],"striker":"*" in values[0]})
+            batsmen.append({"name":values[0].replace("*","").strip(),"runs":values[2],"balls":values[3],"striker":"*" in values[0] or re.search(r"\bbatting\b",row_text,re.I) is not None})
     if batsmen:
         batsmen=batsmen[-2:]
     bowler=None
@@ -55,15 +56,55 @@ def _improved_parse_players(text):
         bowler={"name":name,"overs":m.group(2),"maidens":m.group(3),"runs":m.group(4),"wickets":m.group(5),"economy":m.group(6)}; break
     return bats[:2],bowler
 
+
+def _infer_striker_from_live(match, batsmen):
+    """Use the latest Cricbuzz delivery to identify the current striker.
+    If the scorecard already exposes a striker marker, keep it. Otherwise the
+    latest 'to Batter' commentary plus the delivery outcome is used to decide
+    whether that batter or the other batter is facing the next ball.
+    """
+    if not batsmen or any(bool(b.get("striker")) for b in batsmen):
+        return
+    live_url=match.get("url","").replace("/live-cricket-scorecard/","/live-cricket-scores/")
+    if not live_url:
+        return
+    try:
+        r=requests.get(live_url,headers=main.HEADERS,timeout=10)
+        r.raise_for_status()
+        soup=BeautifulSoup(r.text,"html.parser")
+        text=_text(soup)
+        latest=None
+        for batter in batsmen:
+            name=main.clean(batter.get("name",""))
+            if not name: continue
+            pattern=re.compile(r"(?:^|\s)(\d+\.\d+)\s+[^|]{0,80}?\bto\s+"+re.escape(name)+r"\b([^|]{0,180})",re.I)
+            for m in pattern.finditer(text):
+                latest=(m.start(),m.group(1),name,m.group(2))
+        if not latest:
+            return
+        _,delivery,name,snippet=latest
+        over_no,ball_no=[int(x) for x in delivery.split(".")]
+        s=snippet.lower()
+        # End of an over always changes strike. Otherwise odd completed runs
+        # change strike; boundaries, dots and even runs keep it unchanged.
+        odd_run=bool(re.search(r"\b(?:1|3|5)\s+runs?\b|\bsingle\b",s))
+        end_over=(ball_no==6)
+        switch=odd_run ^ end_over
+        target=name
+        if switch:
+            other=next((b.get("name") for b in batsmen if main.norm_name(b.get("name"))!=main.norm_name(name)),None)
+            if other: target=other
+        for b in batsmen:
+            b["striker"]=main.norm_name(b.get("name"))==main.norm_name(target)
+    except Exception as exc:
+        print("striker inference error:",exc)
+
 _original_fetch=main.fetch_match_detail
 main.parse_players=_improved_parse_players
 
 
 def _patched_fetch_match_detail(match):
     data=_original_fetch(match)
-    # The score parser preserves innings order. For limited-overs matches, the
-    # last score is the current innings once both innings are present; otherwise
-    # the first score is the current innings.
     scores=[]
     for key in ("team1_score","team2_score"):
         s=str(data.get(key,""));
@@ -79,26 +120,31 @@ def _patched_fetch_match_detail(match):
             balls=int(om.group(1))*6+int(om.group(2) or 0)
             if balls: data["crr"]=f"{int(sm.group(1))/(balls/6):.2f}"
 
-    if not data.get("batsmen") or not data.get("bowler"):
-        url=match.get("url","").replace("/live-cricket-scores/","/live-cricket-scorecard/")
-        try:
-            r=requests.get(url,headers=main.HEADERS,timeout=10); r.raise_for_status()
-            bats,bowler=_parse_dom_players(r.text)
-            if bats: data["batsmen"]=bats
-            if bowler: data["bowler"]=bowler
-        except Exception as exc: print("structured player fallback error:",exc)
+    # Prefer structured Cricbuzz scorecard rows whenever available. This keeps
+    # the current batting pair and bowling figures accurate even when the text
+    # parser has already found partial player data.
+    url=match.get("url","").replace("/live-cricket-scores/","/live-cricket-scorecard/")
+    try:
+        r=requests.get(url,headers=main.HEADERS,timeout=10); r.raise_for_status()
+        bats,bowler=_parse_dom_players(r.text)
+        if bats: data["batsmen"]=bats
+        if bowler: data["bowler"]=bowler
+    except Exception as exc:
+        print("structured player fallback error:",exc)
+
+    _infer_striker_from_live(match,data.get("batsmen") or [])
     return data
 
 main.fetch_match_detail=_patched_fetch_match_detail
 app=main.app
 
-# Replace the older embedded /scoreboard page with the full-screen template.
+
 def _scoreboard_full():
     mid=main.request.args.get("match_id","")
     if not mid:
         return Response("Select a match first: <a href='/select-match'>Match Selector</a>",mimetype="text/html")
     try:
-        with open("static/scoreboard_full.html","r",encoding="utf-8") as f:
+        with open("static/scoreboard_full_v2.html","r",encoding="utf-8") as f:
             html=f.read()
         return Response(html,mimetype="text/html")
     except Exception as exc:

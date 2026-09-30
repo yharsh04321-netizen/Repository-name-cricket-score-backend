@@ -143,7 +143,6 @@ def fixed_fetch_match_detail(match):
             elif team_matches(batting_team, team2):
                 result["team2_score"], result["team2_overs"] = score_text, str(overs)
             else:
-                # For short codes such as INDA/AUSA, use the side code as a final fallback.
                 if norm(batting_team) == norm(result["team1_code"]):
                     result["team1_score"], result["team1_overs"] = score_text, str(overs)
                 else:
@@ -184,7 +183,15 @@ def patched_scoreboard():
     response = _original_scoreboard()
     try:
         html = response.get_data(as_text=True)
-        html = html.replace("setInterval(update,15000)", "setInterval(update,5000)")
+        # The scoreboard JS has changed between versions. Patch any existing
+        # update timer instead of relying on one exact spacing/interval string.
+        html = re.sub(r"setInterval\(\s*update\s*,\s*\d+\s*\)", "setInterval(update,5000)", html)
+        # Make every browser request bypass an intermediate HTTP cache.
+        html = html.replace("fetch('/selected-score?match_id=' + MID)", "fetch('/selected-score?match_id=' + MID + '&_=' + Date.now(), {cache:'no-store'})")
+        html = html.replace('fetch(`/selected-score?match_id=${MID}`)', 'fetch(`/selected-score?match_id=${MID}&_=${Date.now()}`, {cache:"no-store"})')
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         response.set_data(html)
     except Exception as e:
         print("scoreboard patch error:", repr(e))

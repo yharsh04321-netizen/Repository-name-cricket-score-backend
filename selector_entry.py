@@ -1,6 +1,6 @@
 # Render entrypoint for the live match selector + production OBS scoreboard.
 # The selector must use entry.app so the production live-score fixes are loaded.
-from flask import Response, request
+from flask import Response, request, jsonify
 from urllib.parse import quote
 import re
 import requests
@@ -11,7 +11,7 @@ import main
 app = entry.app
 
 SELECTOR_SOURCES = [
-    "https://www.cricbuzz.com/cricket-match/live-scores/recent-matches",
+    "https://www.cricbuzzbuzz.com/cricket-match/live-scores/recent-matches",
     "https://m.cricbuzz.com/cricket-match/live-scores/recent-matches",
 ]
 HEADERS = dict(main.HEADERS)
@@ -58,6 +58,47 @@ def get_matches():
             matches.insert(0, item)
             seen.add(item["id"])
     return matches[:30]
+
+
+def _fixed_selected_score():
+    """Use the selected numeric ID directly; do not call nonexistent get_match_by_id()."""
+    mid = str(request.args.get("match_id", "")).strip()
+    if not mid.isdigit():
+        return jsonify({"match": None, "error": "match_id is required"}), 400
+
+    match = {
+        "id": mid,
+        "name": f"Match {mid}",
+        "url": f"https://www.cricbuzz.com/live-cricket-scores/{mid}",
+    }
+    try:
+        data = entry.wsgi._extract_live(match)
+        if data is None:
+            data = entry.wsgi._fetch_match_detail(match)
+        data = entry._raw_score_fix(match, data)
+        response = jsonify({"match": data})
+    except Exception as exc:
+        print("selector selected-score error:", repr(exc))
+        response = jsonify({"match": None, "error": "live score temporarily unavailable"})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["Vary"] = "*"
+    return response
+
+
+# entry.py's selected-score handler previously called wsgi.main.get_match_by_id(),
+# but main.py does not define that function. Replace that handler here with the
+# direct numeric-ID path above.
+_selected_endpoint = None
+for _rule in app.url_map.iter_rules():
+    if _rule.rule == "/selected-score":
+        _selected_endpoint = _rule.endpoint
+        break
+if _selected_endpoint:
+    app.view_functions[_selected_endpoint] = _fixed_selected_score
+else:
+    app.add_url_rule("/selected-score", endpoint="selector_selected_score", view_func=_fixed_selected_score, methods=["GET"])
 
 
 def select_match():

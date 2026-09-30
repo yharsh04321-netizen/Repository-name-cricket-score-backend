@@ -6,9 +6,8 @@ from flask import request, jsonify
 
 app = wsgi.app
 
-# IMPORTANT: the upstream Cricbuzz live-center response can be cached even when
-# our own Render response is no-cache. Give every upstream request a unique URL
-# so each OBS refresh gets a fresh live snapshot.
+# OBS must receive a fresh upstream snapshot. Cricbuzz's live-center endpoint
+# can be CDN-cached, so every server-side poll gets a unique query string.
 def _obs_fresh_live_data(match):
     mid = wsgi._match_id(match)
     if not mid:
@@ -19,13 +18,14 @@ def _obs_fresh_live_data(match):
         "Cache-Control": "no-cache, no-store, max-age=0",
         "Pragma": "no-cache",
         "User-Agent": "Mozilla/5.0 (cricket-live-overlay/1.0)",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.cricbuzz.com/",
+        "Origin": "https://www.cricbuzz.com",
     })
     try:
         r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
-        # Keep the WSGI cache in sync for any other code path, but do not use it
-        # as the source of truth for the OBS endpoint.
         wsgi.LIVE_CACHE[mid] = {"time": time.time(), "data": data}
         return data
     except Exception as exc:
@@ -33,17 +33,14 @@ def _obs_fresh_live_data(match):
         cached = wsgi.LIVE_CACHE.get(mid)
         return cached["data"] if cached else None
 
-# _extract_live resolves _live_data from the wsgi module globals, so replacing
-# this function here makes the production OBS endpoint fetch fresh upstream data.
 wsgi._live_data = _obs_fresh_live_data
 
 
 def _obs_selected_score():
-    """Dedicated JSON endpoint used by the OBS scoreboard."""
+    """Dedicated no-cache JSON endpoint used by the OBS scoreboard."""
     mid = str(request.args.get("match_id", "")).strip()
     if not mid:
         return jsonify({"match": None, "error": "match_id is required"}), 400
-
     try:
         match = wsgi.main.get_match_by_id(mid)
         data = wsgi._fetch_match_detail(match)
@@ -59,6 +56,7 @@ def _obs_selected_score():
         response.status_code = 200
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
 
 
@@ -87,26 +85,58 @@ def _obs_live_no_cache(response):
     if path == "/scoreboard" and response.status_code == 200:
         try:
             html = response.get_data(as_text=True)
-            refresh_script = r'''<script>
+            # Do NOT force a full-page reload. OBS Chromium can keep a browser
+            # source alive and a document reload can reset the overlay state.
+            # Instead, patch fetch() so the scoreboard's existing polling loop
+            # always asks our JSON endpoint for a genuinely fresh response.
+            client_script = r'''<script>
 (function(){
-  // Reload the scoreboard document every 5 seconds. Each reload gets a fresh
-  // timestamp and the server fetches a fresh upstream live snapshot.
-  const INTERVAL = 5000;
-  setInterval(function(){
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init){
     try {
-      const u = new URL(window.location.href);
-      u.searchParams.set('_obs_live_ts', Date.now().toString());
-      window.location.replace(u.toString());
-    } catch(e) {
-      window.location.reload();
-    }
-  }, INTERVAL);
+      let url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+      if (url.indexOf('/selected-score') !== -1) {
+        const u = new URL(url, window.location.href);
+        u.searchParams.set('_obs_client_ts', Date.now().toString());
+        u.searchParams.set('_obs_client_rand', Math.random().toString(36).slice(2));
+        if (typeof input === 'string') input = u.toString();
+        else input = new Request(u.toString(), input);
+        init = Object.assign({}, init || {}, {cache:'no-store'});
+      }
+    } catch(e) {}
+    return nativeFetch(input, init);
+  };
+
+  // Watchdog: if the scoreboard's own polling loop stops, poll the JSON
+  // endpoint independently. This does not reload the page and is OBS-safe.
+  const mid = new URLSearchParams(window.location.search).get('match_id') || '';
+  let lastJson = '';
+  async function obsWatchdog(){
+    if(!mid) return;
+    try{
+      const u = new URL('/selected-score', window.location.origin);
+      u.searchParams.set('match_id', mid);
+      u.searchParams.set('_obs_watchdog', Date.now().toString());
+      const r = await nativeFetch(u.toString(), {cache:'no-store', headers:{'Cache-Control':'no-cache'}});
+      if(!r.ok) return;
+      const data = await r.json();
+      const current = JSON.stringify(data && data.match ? data.match : data);
+      if(current && current !== lastJson){
+        lastJson = current;
+        // The normal scoreboard polling code consumes this endpoint. Dispatch
+        // a custom event as an additional signal for future render handlers.
+        window.dispatchEvent(new CustomEvent('obs-live-score', {detail:data}));
+      }
+    }catch(e){}
+  }
+  obsWatchdog();
+  setInterval(obsWatchdog, 3000);
 })();
 </script>'''
             if "</head>" in html:
-                html = html.replace("</head>", refresh_script + "</head>", 1)
+                html = html.replace("</head>", client_script + "</head>", 1)
                 response.set_data(html)
         except Exception as exc:
-            print("OBS refresh injection error:", repr(exc))
+            print("OBS live polling injection error:", repr(exc))
 
     return response

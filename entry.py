@@ -34,6 +34,57 @@ def _obs_fresh_live_data(match):
 wsgi._live_data = _obs_fresh_live_data
 
 
+def _fix_innings_break_side(data):
+    """Cricbuzz can report the next batting team at an innings break while
+    the score fields still belong to the completed innings. At that moment the
+    completed innings score must remain attached to the team that just batted.
+    """
+    if not isinstance(data, dict):
+        return data
+    status = str(data.get("status", "")).lower()
+    if "innings break" not in status:
+        return data
+
+    batting_index = data.get("batting_index")
+    try:
+        batting_index = int(batting_index)
+    except (TypeError, ValueError):
+        batting_index = 0
+
+    # At an innings break the live miniscore may already have switched to the
+    # next innings. The completed score is therefore on the opposite side.
+    completed_index = 1 - batting_index
+    left_key = f"team{batting_index + 1}_score"
+    right_key = f"team{completed_index + 1}_score"
+    left_overs = f"team{batting_index + 1}_overs"
+    right_overs = f"team{completed_index + 1}_overs"
+
+    # Only correct the mapping when the completed side is missing its score.
+    # This avoids changing a correctly mapped innings-break response.
+    left_score = data.get(left_key, "-")
+    right_score = data.get(right_key, "-")
+    if left_score not in (None, "", "-") and right_score in (None, "", "-"):
+        data[left_key], data[right_key] = right_score, left_score
+        data[left_overs], data[right_overs] = data.get(right_overs, ""), data.get(left_overs, "")
+        data["batting_index"] = completed_index
+        data["bowling_index"] = batting_index
+    elif left_score not in (None, "", "-") and right_score not in (None, "", "-"):
+        # If both sides have scores, the current miniscore's batting_index is
+        # the side Cricbuzz says is next; at the break the just-completed side
+        # is the opposite side.
+        data["team1_score"], data["team2_score"] = data.get("team2_score", "-"), data.get("team1_score", "-")
+        data["team1_overs"], data["team2_overs"] = data.get("team2_overs", ""), data.get("team1_overs", "")
+        data["batting_index"] = completed_index
+        data["bowling_index"] = batting_index
+
+    # Do not display stale live batters/bowler from the completed innings.
+    data["batsmen"] = []
+    data["bowler"] = None
+    data["partnership"] = "-"
+    data["current_over"] = {"over": "", "balls": [], "free_hit": False, "last_ball": ""}
+    return data
+
+
 def _obs_selected_score():
     mid = str(request.args.get("match_id", "")).strip()
     if not mid:
@@ -41,6 +92,7 @@ def _obs_selected_score():
     try:
         match = wsgi.main.get_match_by_id(mid)
         data = wsgi._fetch_match_detail(match)
+        data = _fix_innings_break_side(data)
         response = jsonify({"match": data})
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -79,11 +131,6 @@ def _obs_live_no_cache(response):
     if path == "/scoreboard" and response.status_code == 200:
         try:
             html = response.get_data(as_text=True)
-            # The previous watchdog fetched fresh JSON but did not itself update
-            # the scoreboard DOM. For OBS reliability, reload the document every
-            # 5 seconds with a unique query string. This guarantees the rendered
-            # scoreboard starts from a fresh server snapshot without relying on
-            # internal DOM IDs or the page's own polling implementation.
             client_script = r'''<script>
 (function(){
   const params = new URLSearchParams(window.location.search);

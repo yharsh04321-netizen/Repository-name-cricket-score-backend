@@ -1,5 +1,6 @@
-from flask import request
+from flask import request, Response
 import re, html
+from pathlib import Path
 import selector_entry, main, wsgi
 
 app = selector_entry.app
@@ -215,6 +216,28 @@ def selected_score():
     data.setdefault("team1_score","-");data.setdefault("team2_score","-");data.setdefault("team1_overs","");data.setdefault("team2_overs","");data.setdefault("batting_index",0);data.setdefault("bowling_index",1-int(data.get("batting_index",0) or 0))
     resp=selector_entry.jsonify({"match":data,"error":None});resp.headers["Cache-Control"]="no-store, no-cache, max-age=0";return resp
 
+
+def scoreboard():
+    """Serve the OBS board with a small final-match presentation fix."""
+    mid = str(request.args.get("match_id", "")).strip()
+    if not mid.isdigit():
+        return Response("Select a match first: <a href='/select-match'>Match Selector</a>", mimetype="text/html")
+    try:
+        html_doc = Path("static/scoreboard_full_v2.html").read_text(encoding="utf-8")
+        enhancement = r'''<style>.final-side-score{color:#ffd21a;font-size:clamp(15px,1.7vw,32px);font-weight:1000;margin-top:.4vw}</style><script>(function(){let finalMatch=null;const originalFetch=window.fetch;window.fetch=async function(){const response=await originalFetch.apply(this,arguments);try{const u=String(arguments[0]||'');if(u.indexOf('/selected-score?')!==-1){response.clone().json().then(function(j){finalMatch=j&&j.match?j.match:null;setTimeout(decorateFinal,0)}).catch(function(){})}}catch(e){}return response};function decorateFinal(){if(!finalMatch||!finalMatch.final)return;const bi=Number(finalMatch.batting_index||0)===1?1:0;const rightScore=bi===1?finalMatch.team1_score:finalMatch.team2_score;const rightOvers=bi===1?finalMatch.team1_overs:finalMatch.team2_overs;const el=document.querySelector('.side.right .bowling');if(el){el.className='final-side-score';el.textContent=(rightScore||'-')+(rightOvers?' • '+rightOvers+' OVERS':'')}}setInterval(decorateFinal,500)})();</script>'''
+        html_doc = html_doc.replace("</head>", enhancement + "</head>")
+        return Response(html_doc, mimetype="text/html", headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    except Exception as exc:
+        return Response("Scoreboard template error: " + str(exc), status=500, mimetype="text/plain")
+
+
 ep=next((r.endpoint for r in app.url_map.iter_rules() if r.rule=="/selected-score"),None)
 if ep:app.view_functions[ep]=selected_score
 else:app.add_url_rule("/selected-score",endpoint="selected_score_fixed",view_func=selected_score,methods=["GET"])
+
+for rule in list(app.url_map.iter_rules()):
+    if rule.rule == "/scoreboard":
+        app.view_functions[rule.endpoint] = scoreboard
+        break
+else:
+    app.add_url_rule("/scoreboard",endpoint="scoreboard_fixed",view_func=scoreboard,methods=["GET"])

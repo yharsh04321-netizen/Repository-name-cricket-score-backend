@@ -1,6 +1,6 @@
 # Render production entrypoint: keep the live-data WSGI scoreboard.
-import time
 import wsgi
+from flask import request
 
 app = wsgi.app
 
@@ -8,18 +8,7 @@ app = wsgi.app
 @app.after_request
 def _obs_live_no_cache(response):
     """Prevent OBS/browser caching and force fresh selected-score requests."""
-    path = ""
-    try:
-        path = app.request_class.environ.get("PATH_INFO", "")
-    except Exception:
-        pass
-
-    # Flask exposes request context; import lazily so the module stays simple.
-    try:
-        from flask import request
-        path = request.path
-    except Exception:
-        pass
+    path = request.path
 
     if path in ("/scoreboard", "/selected-score"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -29,9 +18,9 @@ def _obs_live_no_cache(response):
     if path == "/scoreboard" and response.status_code == 200:
         try:
             html = response.get_data(as_text=True)
-            # This runs BEFORE the scoreboard's own JavaScript because it is
-            # injected at the start of <head>. Every selected-score fetch gets
-            # a unique query parameter and cache:'no-store'.
+            # Install this before the scoreboard's own JavaScript executes.
+            # Every selected-score request gets a unique timestamp and
+            # cache:'no-store', so OBS cannot keep an old score snapshot.
             refresh_script = r'''<script>
 (function(){
   const nativeFetch = window.fetch.bind(window);

@@ -36,6 +36,14 @@ def _team_flag(name):
     return "🏳️"
 
 
+def _extract_teams(title):
+    text = re.sub(r"\s+", " ", str(title or "")).strip()
+    parts = re.split(r"\s+vs\s+|\s+v\s+", text, flags=re.I)
+    if len(parts) >= 2:
+        return parts[0].strip(), re.split(r"\s+-\s+|\s+\|\s+|\s+\(\s*", parts[1])[0].strip()
+    return "TEAM 1", "TEAM 2"
+
+
 def _parse_scores(text):
     out = []
     # Cricbuzz scorecard text normally contains e.g. IND 406-2 (43.3 Ov).
@@ -59,6 +67,7 @@ def _parse_captains(_html, _text):
 main.scorecard_url = _scorecard_url
 main.team_code = _team_code
 main.team_flag = _team_flag
+main.extract_teams = _extract_teams
 main.parse_scores = _parse_scores
 main.parse_captains = _parse_captains
 
@@ -109,7 +118,7 @@ def current_over(raw):
 
 def _completed_result(text, live_status=""):
     combined = " ".join(x for x in (str(text or ""), str(live_status or "")) if x)
-    m = re.search(r"([A-Za-z][A-Za-z .&'-]{1,60}\s+won by\s+[^|]+)", combined, re.I)
+    m = re.search(r"([A-Za-z][A-Za-z .&'-]{1,60}\s+won by\s+[^.]{1,100}?(?:runs?|wickets?|innings?|remaining))", combined, re.I)
     if m:
         return re.sub(r"\s+", " ", m.group(1)).strip()
     for phrase in ("Match tied", "Match abandoned due to rain", "No result", "Match drawn", "Match completed"):

@@ -1,8 +1,12 @@
 # Render production entrypoint for the OBS cricket scoreboard.
 import time
+import re
 import requests
+from bs4 import BeautifulSoup
+from html import escape
+from urllib.parse import quote
 import wsgi
-from flask import request, jsonify, send_from_directory
+from flask import request, jsonify, send_from_directory, Response
 
 app = wsgi.app
 
@@ -45,12 +49,7 @@ def _valid_score(v):
 
 
 def _raw_score_fix(match, data):
-    """Fill score fields directly from miniscore.batTeam.
-
-    The live JSON uses miniscore.batTeam.teamScore/teamWkts. Older code was
-    looking primarily at batTeamScoreObj, which can be absent and produced a
-    perfectly valid page with player/CRR data but '-' for the team score.
-    """
+    """Fill score fields directly from miniscore.batTeam."""
     if not isinstance(data, dict):
         return data
     payload = _obs_fresh_live_data(match)
@@ -87,9 +86,6 @@ def _raw_score_fix(match, data):
 
     key = str(wsgi._match_id(match))
     mem = SCORE_MEMORY.setdefault(key, {"team1_score": "-", "team2_score": "-", "team1_overs": "", "team2_overs": ""})
-
-    # During a normal live innings, attach the fresh score to the actual
-    # batting team. Keep the other innings score intact.
     if idx == 0:
         mem["team1_score"] = score
         if overs != "": mem["team1_overs"] = str(overs)
@@ -97,7 +93,6 @@ def _raw_score_fix(match, data):
         mem["team2_score"] = score
         if overs != "": mem["team2_overs"] = str(overs)
 
-    # Never let a '-' from a transient response erase a score we already saw.
     if not _valid_score(data.get("team1_score")):
         data["team1_score"] = mem["team1_score"]
     if not _valid_score(data.get("team2_score")):
@@ -106,8 +101,6 @@ def _raw_score_fix(match, data):
         data["team1_overs"] = mem["team1_overs"]
     if not data.get("team2_overs"):
         data["team2_overs"] = mem["team2_overs"]
-
-    # If wsgi produced no useful score at all, use the raw live score.
     if not _valid_score(data.get("team1_score")) and idx == 0:
         data["team1_score"] = score
     if not _valid_score(data.get("team2_score")) and idx == 1:
@@ -126,13 +119,10 @@ def _obs_selected_score():
         return jsonify({"match": None, "error": "match_id is required"}), 400
     try:
         match = wsgi.main.get_match_by_id(mid)
-        # _extract_live uses the fresh payload and supplies batsmen, bowler,
-        # current over and CRR. Then _raw_score_fix guarantees the score line.
         data = wsgi._extract_live(match)
         if data is None:
             data = wsgi._fetch_match_detail(match)
         data = _raw_score_fix(match, data)
-
         response = jsonify({"match": data})
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -149,7 +139,6 @@ def _obs_selected_score():
         return response
 
 
-# Replace the existing endpoint from main/wsgi with our fresh version.
 _selected_endpoint = None
 for _rule in app.url_map.iter_rules():
     if _rule.rule == "/selected-score":
@@ -161,9 +150,6 @@ else:
     app.add_url_rule("/selected-score", endpoint="selected_score", view_func=_obs_selected_score, methods=["GET"])
 
 
-# Restore the original full OBS layout. The previous deployment changed the
-# embedded /scoreboard template; this uses the project's existing full-v2
-# template instead, so only the live-data logic changes.
 def _obs_scoreboard():
     return send_from_directory("static", "scoreboard_full_v2.html")
 
@@ -173,9 +159,113 @@ for _rule in list(app.url_map.iter_rules()):
         break
 
 
+# ---------------------------------------------------------------------------
+# LIVE MATCH SELECTOR
+# ---------------------------------------------------------------------------
+# The old selector only displayed a hard-coded selected ID. This page discovers
+# current Cricbuzz live-score links and lets the user select one before opening
+# the OBS scoreboard. The scoreboard/live-data code above remains unchanged.
+
+def _discover_live_matches():
+    matches = []
+    seen = set()
+    try:
+        url = "https://www.cricbuzz.com/cricket-match/live-scores"
+        r = requests.get(url, headers=wsgi.HEADERS, timeout=12)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a.get("href", "")
+            m = re.search(r"/live-cricket-scores/(\d+)/([^\"?#]+)", href)
+            if not m:
+                continue
+            mid, slug = m.group(1), m.group(2)
+            if mid in seen:
+                continue
+            text = " ".join(a.stripped_strings)
+            if not text:
+                text = slug.replace("-", " ").title()
+            text = re.sub(r"\s+", " ", text).strip()
+            # Avoid navigation links that happen to contain a score URL.
+            if len(text) < 5 or "scorecard" in text.lower():
+                continue
+            seen.add(mid)
+            matches.append({
+                "id": mid,
+                "name": text,
+                "url": "https://www.cricbuzz.com/live-cricket-scores/" + mid + "/" + slug,
+            })
+    except Exception as exc:
+        print("selector discovery error:", repr(exc))
+
+    # Keep the current India-West Indies match available if Cricbuzz's HTML
+    # temporarily omits it from the live-score index.
+    if not any(str(x["id"]) == "151543" for x in matches):
+        matches.insert(0, {
+            "id": "151543",
+            "name": "India vs West Indies — 2nd ODI",
+            "url": "https://www.cricbuzz.com/live-cricket-scores/151543/ind-vs-wi-2nd-odi-india-v-west-indies",
+        })
+    return matches
+
+
+UPCOMING_SELECTOR = [
+    ("upcoming-ind-wi-3odi", "India 🇮🇳 vs West Indies 🌴 — 3rd ODI", "03 Oct 2026", "2:00 PM IST", "PCA International Cricket Stadium, New Chandigarh"),
+    ("upcoming-ind-wi-1t20", "India 🇮🇳 vs West Indies 🌴 — 1st T20I", "06 Oct 2026", "7:00 PM IST", "Ekana Cricket Stadium, Lucknow"),
+    ("upcoming-ind-wi-2t20", "India 🇮🇳 vs West Indies 🌴 — 2nd T20I", "09 Oct 2026", "7:00 PM IST", "JSCA International Stadium, Ranchi"),
+    ("upcoming-ind-wi-3t20", "India 🇮🇳 vs West Indies 🌴 — 3rd T20I", "11 Oct 2026", "7:00 PM IST", "Holkar Stadium, Indore"),
+    ("upcoming-ind-wi-4t20", "India 🇮🇳 vs West Indies 🌴 — 4th T20I", "14 Oct 2026", "7:00 PM IST", "Rajiv Gandhi International Stadium, Hyderabad"),
+    ("upcoming-ind-wi-5t20", "India 🇮🇳 vs West Indies 🌴 — 5th T20I", "17 Oct 2026", "7:00 PM IST", "M Chinnaswamy Stadium, Bengaluru"),
+]
+
+
+def _selector_page():
+    selected = str(request.args.get("selected", "")).strip()
+    live_matches = _discover_live_matches()
+
+    if request.method == "POST":
+        mid = str(request.form.get("match_id", "")).strip()
+        valid = any(str(m["id"]) == mid for m in live_matches) or any(x[0] == mid for x in UPCOMING_SELECTOR)
+        if valid:
+            return __import__("flask").redirect("/select-match?selected=" + quote(mid))
+
+    selected_live = next((m for m in live_matches if str(m["id"]) == selected), None)
+    selected_upcoming = next((x for x in UPCOMING_SELECTOR if x[0] == selected), None)
+
+    live_cards = []
+    for m in live_matches:
+        live_cards.append(f'''<div class="card livecard"><div class="live">● LIVE / TODAY</div><div class="teams">{escape(m["name"])}</div><form method="POST"><input type="hidden" name="match_id" value="{escape(str(m["id"]))}"><button>SELECT THIS MATCH</button></form></div>''')
+    if not live_cards:
+        live_cards.append('<div class="empty">No live matches found right now. Tap refresh.</div>')
+
+    upcoming_cards = []
+    for mid, name, date, tm, venue in UPCOMING_SELECTOR:
+        upcoming_cards.append(f'''<div class="card upcoming"><div class="up">🕒 UPCOMING</div><div class="teams">{escape(name)}</div><div class="date">{escape(date)} · {escape(tm)}</div><div class="venue">{escape(venue)}</div><form method="POST"><input type="hidden" name="match_id" value="{escape(mid)}"><button class="blue">SELECT UPCOMING MATCH</button></form></div>''')
+
+    selected_html = ""
+    if selected_live:
+        board = "/scoreboard?match_id=" + quote(str(selected_live["id"]))
+        selected_html = f'''<div class="selected"><b>✓ LIVE MATCH SELECTED</b><br><strong>{escape(selected_live["name"])}</strong><br><span>Match ID: {escape(str(selected_live["id"]))}</span><br><br><a href="{board}">OPEN LIVE SCOREBOARD</a></div>'''
+    elif selected_upcoming:
+        board = "/scoreboard?match_id=" + quote(selected_upcoming[0])
+        selected_html = f'''<div class="selected upcoming-selected"><b>✓ UPCOMING MATCH SELECTED</b><br><strong>{escape(selected_upcoming[1])}</strong><br>{escape(selected_upcoming[2])} · {escape(selected_upcoming[3])}<br><br><a href="{board}">PREVIEW SCOREBOARD</a></div>'''
+
+    html = f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"><title>Cricket Match Selector</title><style>
+body{{margin:0;background:#080d16;color:#fff;font-family:Arial,sans-serif}}.wrap{{max-width:950px;margin:auto;padding:20px 16px 50px}}h1{{margin:0 0 8px;font-size:27px}}p{{color:#b8c4d3}}h2{{margin-top:28px;border-bottom:1px solid #303b4a;padding-bottom:10px}}.card{{background:#141c28;border:1px solid #2c3949;border-radius:14px;padding:18px;margin:12px 0;box-shadow:0 5px 18px #0005}}.live{{color:#20e878;font-weight:900;font-size:13px}}.up{{color:#ffd21a;font-weight:900;font-size:13px}}.teams{{font-size:19px;font-weight:900;margin:10px 0 15px;line-height:1.35}}.date{{color:#ffd21a;font-weight:900}}.venue{{color:#aebccc;margin:7px 0 15px;font-size:14px}}button,a{{display:inline-block;padding:12px 16px;border:0;border-radius:8px;background:#00c853;color:#fff;font-weight:900;text-decoration:none;cursor:pointer}}.blue{{background:#1677ff}}.refresh{{background:#303947;margin:8px 0}}.selected{{background:#10351f;border:1px solid #00c853;border-radius:12px;padding:18px;line-height:1.7;margin:18px 0}}.upcoming-selected{{background:#162846;border-color:#1677ff}}.empty{{padding:20px;background:#141c28;border-radius:12px;color:#9da8b6}}.hint{{font-size:13px;color:#8794a5}}
+</style></head><body><div class="wrap"><h1>🏏 CRICKET MATCH SELECTOR</h1><p>Select the match you want to send to the OBS scoreboard.</p>{selected_html}<form method="GET"><button class="refresh" type="submit">↻ REFRESH LIVE MATCHES</button></form><h2>🔴 Live Matches</h2>{''.join(live_cards)}<h2>🕒 Upcoming Matches</h2>{''.join(upcoming_cards)}<p class="hint">After selecting a match, open its scoreboard and use that page as the OBS Browser Source.</p></div></body></html>'''
+    return Response(html, mimetype="text/html")
+
+
+# Replace the old /select-match route with the real selector.
+for _rule in list(app.url_map.iter_rules()):
+    if _rule.rule == "/select-match":
+        app.view_functions[_rule.endpoint] = _selector_page
+        break
+
+
 @app.after_request
 def _obs_live_no_cache(response):
-    if request.path in ("/scoreboard", "/selected-score"):
+    if request.path in ("/scoreboard", "/selected-score", "/select-match"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

@@ -1,12 +1,14 @@
-# Render entrypoint that replaces the old one-match selector with a real match selector.
+# Render entrypoint for the live match selector + production OBS scoreboard.
+# The selector must use entry.app so the production live-score fixes are loaded.
 from flask import Response, request
 from urllib.parse import quote
 import re
 import requests
 from bs4 import BeautifulSoup
+import entry
 import main
 
-app = main.app
+app = entry.app
 
 SELECTOR_SOURCES = [
     "https://www.cricbuzz.com/cricket-match/live-scores/recent-matches",
@@ -36,7 +38,6 @@ def get_matches():
                     text = (m.group(2) or "").replace("-", " ").strip()
                 if not text:
                     continue
-                # Keep actual match-looking links; exclude navigation duplicates.
                 low = text.lower()
                 if any(x in low for x in ("scorecard", "commentary", "squads", "overs", "graphs")):
                     continue
@@ -48,7 +49,6 @@ def get_matches():
         if len(matches) >= 8:
             break
 
-    # Always keep the currently relevant match available if the source page changes.
     fallback = [
         {"id": "151543", "name": "India vs West Indies — 2nd ODI"},
         {"id": "151532", "name": "India vs West Indies — 1st ODI"},
@@ -76,7 +76,7 @@ def select_match():
 </style></head><body><h1>🏏 Cricket Match Selector</h1><div class="sub">Choose the match you want to send to your live scoreboard / OBS.</div><div class="top"><a class="refresh" href="/select-match">↻ REFRESH MATCHES</a><a class="home" href="/">Backend status</a></div>{selected_html}{body}</body></html>'''
     return Response(html, mimetype="text/html", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
-# Replace main.py's old static selector without touching the working scoreboard routes.
+# Replace only the selector route; entry.app keeps the production live scoreboard.
 app.view_functions["select_match"] = select_match
 
 if __name__ == "__main__":

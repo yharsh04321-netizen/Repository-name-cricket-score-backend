@@ -11,7 +11,7 @@ import main
 app = entry.app
 
 SELECTOR_SOURCES = [
-    "https://www.cricbuzzbuzz.com/cricket-match/live-scores/recent-matches",
+    "https://www.cricbuzz.com/cricket-match/live-scores/recent-matches",
     "https://m.cricbuzz.com/cricket-match/live-scores/recent-matches",
 ]
 HEADERS = dict(main.HEADERS)

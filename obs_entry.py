@@ -7,27 +7,11 @@ app = selector_entry.app
 
 
 def _selected_score():
-    mid = str(request.args.get("match_id", "")).strip()
-    if not mid.isdigit():
-        return jsonify({"match": None, "error": "match_id is required"}), 400
-    try:
-        match = next((m for m in selector_entry.get_matches() if str(m.get("id")) == mid), {"id": mid, "name": f"Match {mid}", "url": f"https://www.cricbuzz.com/live-cricket-scores/{mid}"})
-    except Exception:
-        match = {"id": mid, "name": f"Match {mid}", "url": f"https://www.cricbuzz.com/live-cricket-scores/{mid}"}
-    data = None
-    try:
-        data = main.live_detail(mid)
-    except Exception as exc:
-        print("selected-score main parser failed:", repr(exc))
-    if data is None:
-        try:
-            data = selector_entry._fallback_live(match)
-        except Exception as exc:
-            print("selected-score fallback failed:", repr(exc))
-    response = jsonify({"match": data, "error": None if data else "live score temporarily unavailable"})
-    for k, v in {"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0", "Pragma":"no-cache", "Expires":"0", "Vary":"*"}.items():
-        response.headers[k] = v
-    return response
+    # selector_entry already contains the production live-score pipeline:
+    # fresh Cricbuzz mcenter data -> wsgi._extract_live -> score/header/status
+    # fallbacks -> OBS score normalization. Do not route production traffic
+    # back through main.live_detail(), which is the legacy parser.
+    return selector_entry._fixed_selected_score()
 
 
 # entry.py already owns the Flask app, so defining another @app.route('/') does

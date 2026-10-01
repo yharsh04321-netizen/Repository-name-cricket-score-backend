@@ -99,9 +99,9 @@ def _raw_score_fix(match, data):
         else:
             idx = 0
 
-    # If miniscore has no total, leave the richer wsgi result untouched.
-    # It may already contain matchHeader/historical score recovery.
-    if runs is None or wickets is None:
+    # If miniscore has no usable total, leave the richer wsgi result
+    # untouched. _extract_live may have recovered it from status/header/CRR.
+    if runs is None or wickets is None or str(runs).strip() in {"", "-", "—"} or str(wickets).strip() in {"", "-", "—"}:
         data["team1"] = t1 or data.get("team1", "TEAM 1")
         data["team2"] = t2 or data.get("team2", "TEAM 2")
         data["batting_index"] = idx

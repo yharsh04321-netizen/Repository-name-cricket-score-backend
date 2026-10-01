@@ -452,6 +452,32 @@ def live_detail(mid):
             pass
 
     cr = find_number(ms, ("currentRunRate","crr","currentRR","runRate","currentRunRateStr"), "-")
+
+    # Final live-score fallback: if Cricbuzz omits teamScore, use the live
+    # overs + current run rate to recover the displayed innings total.
+    if current_score == "-":
+        try:
+            ov = float(str(overs).replace(",", ""))
+            rr = float(str(cr).replace(",", ""))
+            if ov >= 0 and rr >= 0:
+                current_score = score_text(int(round(ov * rr)), wkts)
+        except Exception:
+            pass
+
+    # No wicket lost means the partnership is the innings total if the feed
+    # does not provide a partnership field.
+    if partnership == "-" and wkts in (None, "", 0, "0") and current_score != "-":
+        partnership = str(current_score).split("-", 1)[0]
+
+    # Apply the recovered live score only to the current batting team.
+    if bat and current_score != "-":
+        if same_team(bat, t1):
+            state["team1"] = current_score
+            state["bat"] = t1
+        elif same_team(bat, t2):
+            state["team2"] = current_score
+            state["bat"] = t2
+
     status = clean(ms.get("status") or ms.get("matchStatus") or "LIVE")
 
     def player(p, striker_flag):

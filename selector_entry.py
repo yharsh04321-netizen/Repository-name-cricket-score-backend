@@ -5,6 +5,7 @@ from urllib.parse import quote
 from html import escape
 import re
 import time
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import requests
@@ -231,29 +232,57 @@ def _fallback_live(match):
 
 
 def _fixed_selected_score():
+    """Production score endpoint: never turn parser failures into HTTP 500."""
     mid = str(request.args.get("match_id", "")).strip()
     if not mid.isdigit():
-        return jsonify({"match": None, "error": "match_id is required"}), 400
-    match = next((m for m in get_matches() if str(m["id"]) == mid), None)
-    if not match:
-        match = {"id": mid, "name": f"Match {mid}", "url": f"https://www.cricbuzz.com/live-cricket-scores/{mid}"}
+        payload = {"match": None, "error": "match_id is required"}
+        return Response(json.dumps(payload, default=str), mimetype="application/json", status=400,
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    match = {"id": mid, "name": f"Match {mid}",
+             "url": f"https://www.cricbuzz.com/live-cricket-scores/{mid}"}
     try:
-        data = entry.wsgi._extract_live(match)
+        try:
+            for item in get_matches():
+                if str(item.get("id")) == mid:
+                    match = item
+                    break
+        except Exception as exc:
+            print("selected-score match discovery failed:", repr(exc))
+
+        data = None
+        try:
+            data = entry.wsgi._extract_live(match)
+        except Exception as exc:
+            print("selected-score extract_live failed:", repr(exc))
+
         if data is None:
-            data = _fallback_live(match)
+            try:
+                data = _fallback_live(match)
+            except Exception as exc:
+                print("selected-score fallback failed:", repr(exc))
+
         if data is not None:
             try:
                 data = entry._raw_score_fix(match, data)
             except Exception as exc:
-                print("raw score fix skipped:", repr(exc))
-        response = jsonify({"match": data, "error": None if data else "live score unavailable"})
+                print("selected-score raw score fix skipped:", repr(exc))
+
+        payload = {"match": data, "error": None if data else "live score temporarily unavailable"}
     except Exception as exc:
-        print("selected-score fatal error:", repr(exc))
-        data = _fallback_live(match)
-        response = jsonify({"match": data, "error": None if data else "live score temporarily unavailable"})
-    for k, v in {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0", "Vary": "*"}.items():
-        response.headers[k] = v
-    return response
+        print("selected-score outer failure:", repr(exc))
+        payload = {"match": None, "error": "live score temporarily unavailable"}
+
+    return Response(
+        json.dumps(payload, default=str, ensure_ascii=False),
+        mimetype="application/json",
+        status=200,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Vary": "*",
+        },
+    )
 
 
 # Replace whichever /selected-score handler was installed by entry.py.

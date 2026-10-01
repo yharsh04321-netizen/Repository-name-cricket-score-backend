@@ -34,42 +34,71 @@ def fetch_scorecard(mid):
         return None
 
 def scorecard_innings(data):
-    raw = data
-    if isinstance(raw, dict):
-        raw = raw.get("scoreCard") or raw.get("scorecard") or raw.get("scoreCardList") or list(raw.values())
-    if isinstance(raw, dict):
-        raw = [raw]
-    if not isinstance(raw, list):
-        raw = [raw]
+    raw=data
+    if isinstance(raw,dict):
+        raw=raw.get("scoreCard") or raw.get("scorecard") or raw.get("scoreCardList") or raw.get("scorecardList") or raw
+    if isinstance(raw,dict): raw=[raw]
+    if not isinstance(raw,list): raw=[raw]
     out=[]
     for item in raw:
-        if not isinstance(item, dict): continue
+        if not isinstance(item,dict): continue
         bd=item.get("batTeamDetails") or item.get("batTeam") or {}
-        team=obj_name(bd) or obj_name(item.get("batTeamName"))
+        team=obj_name(bd) or clean(item.get("batTeamName") or item.get("teamName"))
         if not team: continue
-        sd=item.get("scoreDetails") or item.get("scoreDetail") or {}
+        sd=item.get("scoreDetails") or item.get("scoreDetail") or item.get("score") or {}
         if not isinstance(sd,dict): sd={}
         runs=wickets=overs=None
         for src in (sd,item,bd):
             if not isinstance(src,dict): continue
             if runs is None:
-                for k in ("runs","score","teamScore","teamRuns","totalRuns"):
+                for k in ("runs","score","teamScore","teamRuns","totalRuns","scoreRuns"):
                     v=src.get(k)
                     if v not in (None,"") and not isinstance(v,(dict,list)):
                         try: float(str(v).replace(",","")); runs=v; break
                         except Exception: pass
             if wickets is None:
-                for k in ("wickets","teamWkts","wicketsLost","teamWickets"):
+                for k in ("wickets","teamWkts","wicketsLost","teamWickets","scoreWickets"):
                     v=src.get(k)
                     if v not in (None,"") and not isinstance(v,(dict,list)): wickets=v; break
             if overs is None:
-                for k in ("overs","teamOvers","oversPlayed"):
+                for k in ("overs","teamOvers","oversPlayed","scoreOvers"):
                     v=src.get(k)
                     if v not in (None,"") and not isinstance(v,(dict,list)): overs=v; break
         if runs is not None:
-            out.append({"team":clean(team),"score":score_text(runs,wickets),"overs":clean(overs),"innings":item.get("inningsId") or item.get("inningsID") or item.get("innings")})
+            iid=item.get("inningsId") or item.get("inningsID") or item.get("innings") or 0
+            m=re.search(r"\d+",str(iid))
+            iid_num=int(m.group()) if m else 0
+            out.append({"team":clean(team),"score":score_text(runs,wickets),"overs":clean(overs),"innings":iid,"_iid":iid_num})
+    out.sort(key=lambda x:x.get("_iid",0))
     return out
 
+def header_scores(data,t1,t2):
+    h=data.get("matchHeader",{}) if isinstance(data,dict) else {}
+    ms=h.get("matchScore") or data.get("matchScore") or {}
+    if not isinstance(ms,dict): return {}, ""
+    result={}
+    for idx,key in ((0,"team1Score"),(1,"team2Score")):
+        block=ms.get(key) or {}
+        if not isinstance(block,dict): continue
+        candidates=[]
+        for k,v in block.items():
+            if not isinstance(v,dict): continue
+            m=re.search(r"(\d+)$",str(k))
+            iid=int(m.group(1)) if m else 0
+            runs=v.get("runs",v.get("score",v.get("teamScore")))
+            wkts=v.get("wickets",v.get("teamWkts",v.get("teamWickets",0)))
+            ovs=v.get("overs",v.get("teamOvers",""))
+            if runs not in (None,""): candidates.append((iid,score_text(runs,wkts),clean(ovs)))
+        if candidates:
+            candidates.sort(key=lambda x:x[0])
+            iid,score,ovs=candidates[-1]
+            result["team1" if idx==0 else "team2"]={"score":score,"overs":ovs,"innings":iid}
+    curr=h.get("currBatTeamId") or h.get("currentBatTeamId")
+    for key,team in (("team1",t1),("team2",t2)):
+        td=h.get(key) or {}
+        tid=td.get("teamId") if isinstance(td,dict) else None
+        if curr is not None and tid is not None and str(curr)==str(tid): return result,team
+    return result,""
 
 def clean(v):
     return " ".join(str(v or "").split()).strip()
@@ -201,43 +230,42 @@ def find_number(ms, keys, default="-"):
             return v
     return default
 
-def extract_captains(data, t1, t2, mid):
-    result = {"team1": None, "team2": None}
-    def put(team, name, image=""):
-        if not name:
-            return
-        if same_team(team, t1) and result["team1"] is None:
-            result["team1"] = {"name": clean(name), "image": clean(image)}
-        elif same_team(team, t2) and result["team2"] is None:
-            result["team2"] = {"name": clean(name), "image": clean(image)}
+def extract_captains(data,t1,t2,mid):
+    result={"team1":None,"team2":None}
+    def put(team,name,image=""):
+        if not name: return
+        if same_team(team,t1) and result["team1"] is None: result["team1"]={"name":clean(name),"image":clean(image)}
+        elif same_team(team,t2) and result["team2"] is None: result["team2"]={"name":clean(name),"image":clean(image)}
+    def scan_team(node,team):
+        if not isinstance(node,dict): return
+        for o in walk(node):
+            if not isinstance(o,dict): continue
+            image=o.get("image") or o.get("imageUrl") or o.get("playerImage") or o.get("playerImg") or ""
+            for key in ("captain","captainName","captainPlayer"):
+                v=o.get(key)
+                if isinstance(v,dict): put(team,obj_name(v),v.get("image") or v.get("imageUrl") or image)
+                elif isinstance(v,str): put(team,v,image)
+            if o.get("isCaptain") is True or o.get("isCaptain")==1 or o.get("captainFlag") is True: put(team,obj_name(o),image)
+            role=clean(o.get("role") or o.get("playerRole") or "").lower()
+            if "captain" in role: put(team,obj_name(o),image)
+    h=data.get("matchHeader",{}) if isinstance(data,dict) else {}
+    scan_team(h.get("team1"),t1); scan_team(h.get("team2"),t2)
     for o in walk(data):
-        if not isinstance(o, dict):
-            continue
-        team = obj_name(o.get("team") or o.get("teamObj") or o.get("teamName") or o.get("teamSName"))
-        image = o.get("image") or o.get("imageUrl") or o.get("playerImage") or o.get("playerImg") or ""
-        for key in ("captain", "captainName", "captainPlayer"):
-            v = o.get(key)
-            if isinstance(v, dict):
-                put(team, obj_name(v), v.get("image") or v.get("imageUrl") or "")
-            elif isinstance(v, str):
-                put(team, v, image)
-        if o.get("isCaptain") is True or o.get("isCaptain") == 1 or o.get("captainFlag") is True:
-            put(team, obj_name(o), image)
-        role = clean(o.get("role") or o.get("playerRole") or "").lower()
-        if "captain" in role:
-            put(team, obj_name(o), image)
-    # Current match fallback only if the feed omits captain metadata.
-    if mid == "151543":
-        result["team1"] = result["team1"] or ({"name":"Shubman Gill","image":""} if same_team(t1,"India") else None)
-        result["team2"] = result["team2"] or ({"name":"Shai Hope","image":""} if same_team(t2,"West Indies") else None)
-    caps = []
+        if not isinstance(o,dict): continue
+        team=obj_name(o.get("team") or o.get("teamObj") or o.get("teamName") or o.get("teamSName"))
+        if team and (o.get("isCaptain") is True or o.get("isCaptain")==1 or "captain" in clean(o.get("role") or o.get("playerRole") or "").lower()):
+            put(team,obj_name(o),o.get("image") or o.get("imageUrl") or o.get("playerImage") or "")
+    if mid=="151543":
+        result["team1"]=result["team1"] or ({"name":"Shubman Gill","image":""} if same_team(t1,"India") else None)
+        result["team2"]=result["team2"] or ({"name":"Shai Hope","image":""} if same_team(t2,"West Indies") else None)
+    caps=[]
     for k in ("team1","team2"):
         if result[k]:
-            c = result[k]
-            if not c["image"]:
-                c["image"] = "https://ui-avatars.com/api/?name=" + quote(c["name"]) + "&size=256&background=15263c&color=ffffff&bold=true&format=png"
-            caps.append(c)
+            cc=result[k]
+            if not cc["image"]: cc["image"]="https://ui-avatars.com/api/?name="+quote(cc["name"])+"&size=256&background=15263c&color=ffffff&bold=true&format=png"
+            caps.append(cc)
     return caps
+
 
 def fetch_live(mid):
     now = time.time()
@@ -265,25 +293,26 @@ def live_detail(mid):
     current_score = score_text(runs, wkts)
     overs = find_number(ms, ("overs","teamOvers","batOvers"), "")
 
-    # Use the scorecard endpoint for authoritative innings totals when miniscore
-    # temporarily omits them (common around session/innings transitions).
+    state=last_scores.setdefault(mid,{"team1":"-","team2":"-","bat":""})
+    # matchHeader.matchScore remains populated during session breaks when miniscore omits teamScore.
+    hs,header_bat=header_scores(data,t1,t2)
+    for k,row in hs.items(): state[k]=row["score"]
+    if header_bat:
+        bat=header_bat
+        if same_team(bat,t1) and hs.get("team1",{}).get("overs"): overs=hs["team1"]["overs"]
+        elif same_team(bat,t2) and hs.get("team2",{}).get("overs"): overs=hs["team2"]["overs"]
     try:
-        sc = scorecard_innings(fetch_scorecard(mid))
-        if sc:
-            for row in sc:
-                if same_team(row["team"], t1):
-                    last_scores.setdefault(mid, {"team1":"-","team2":"-","bat":""})["team1"] = row["score"]
-                elif same_team(row["team"], t2):
-                    last_scores.setdefault(mid, {"team1":"-","team2":"-","bat":""})["team2"] = row["score"]
-            latest = sc[-1]
-            if same_team(latest["team"], t1):
-                bat = t1; batting_index = 0
-            elif same_team(latest["team"], t2):
-                bat = t2; batting_index = 1
-            if latest.get("overs"):
-                overs = latest["overs"]
+        sc=scorecard_innings(fetch_scorecard(mid))
+        for row in sc:
+            if same_team(row["team"],t1): state["team1"]=row["score"]
+            elif same_team(row["team"],t2): state["team2"]=row["score"]
+        if sc and not header_bat:
+            latest=sc[-1]
+            if same_team(latest["team"],t1): bat=t1
+            elif same_team(latest["team"],t2): bat=t2
+            if latest.get("overs"): overs=latest["overs"]
     except Exception as exc:
-        print("SCORECARD PARSE ERROR:", repr(exc))
+        print("SCORECARD PARSE ERROR:",repr(exc))
 
     state = last_scores.setdefault(mid, {"team1":"-","team2":"-","bat":""})
     for k, v in historical_scores(data, t1, t2).items():

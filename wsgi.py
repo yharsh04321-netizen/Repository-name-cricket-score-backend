@@ -294,6 +294,128 @@ def _header_current_batting_team(payload, team1, team2):
     return ""
 
 
+
+def _payload_status_text(payload):
+    """Collect the compact status/result strings published by the live feed."""
+    if not isinstance(payload, dict):
+        return ""
+    mini = payload.get("miniscore") or {}
+    header = payload.get("matchHeader") or {}
+    parts = []
+    for node in (mini, header):
+        if isinstance(node, dict):
+            for key in ("status", "matchStatus", "statusText", "result", "resultText", "description"):
+                value = node.get(key)
+                if isinstance(value, str) and value.strip():
+                    parts.append(value)
+    return " ".join(_clean(x) for x in parts if x)
+
+
+def _status_batting_team(payload, team1, team2):
+    """Infer the active/final batting side from a human-readable match status.
+
+    This is a fallback only. It handles innings-break/result feeds where
+    Cricbuzz can leave miniscore.batTeam pointing at the previous innings.
+    """
+    text = _payload_status_text(payload)
+    if not text:
+        return ""
+
+    # Chase / target language is explicit: "India A need 337 runs".
+    m = re.search(r"(?i)(.+?)\s+(?:need|requires?)\s+\d+\s*(?:runs?)?", text)
+    if m:
+        candidate = _clean(m.group(1))
+        for team in (team1, team2):
+            if _team_matches(candidate, team) or _team_matches(team, candidate):
+                return team
+
+    # "X trail/lead by ..." normally identifies the team currently batting.
+    m = re.search(r"(?i)(.+?)\s+(?:trail|trails|lead|leads)\s+by\s+\d+", text)
+    if m:
+        candidate = _clean(m.group(1))
+        for team in (team1, team2):
+            if _team_matches(candidate, team) or _team_matches(team, candidate):
+                return team
+
+    # In a completed limited-overs result, the team that lost by runs was the
+    # final batting side. Example: "India won by 124 runs" -> Sri Lanka batted.
+    m = re.search(r"(?i)(.+?)\s+won\s+by\s+\d+\s+runs?", text)
+    if m:
+        winner = _clean(m.group(1))
+        if _team_matches(winner, team1):
+            return team2
+        if _team_matches(winner, team2):
+            return team1
+
+    # "won by N wickets" means the winner chased successfully, so the winner
+    # is the final/current batting side.
+    m = re.search(r"(?i)(.+?)\s+won\s+by\s+\d+\s+wickets?", text)
+    if m:
+        winner = _clean(m.group(1))
+        for team in (team1, team2):
+            if _team_matches(winner, team):
+                return team
+    return ""
+
+
+def _team_score_mentions(payload, team1, team2):
+    """Find score strings explicitly tied to a team name in feed text."""
+    found = {}
+    if not isinstance(payload, dict):
+        return found
+
+    def scan(value):
+        if isinstance(value, dict):
+            for v in value.values():
+                scan(v)
+        elif isinstance(value, list):
+            for v in value:
+                scan(v)
+        elif isinstance(value, str):
+            text = _clean(value)
+            if not text:
+                return
+            for key, team in (("team1", team1), ("team2", team2)):
+                # Team names can be written as INDA/AUSA or with spaces.
+                aliases = [team, main.team_code(team)]
+                for alias in aliases:
+                    alias_clean = _clean(alias)
+                    if not alias_clean:
+                        continue
+                    pattern = re.escape(alias_clean).replace(r"\ ", r"\s*")
+                    m = re.search(r"(?i)" + pattern + r".{0,45}?\b(\d+)\s*[-/]\s*(\d+)\b", text)
+                    if m:
+                        found[key] = {
+                            "runs": int(m.group(1)),
+                            "wickets": int(m.group(2)),
+                        }
+                        break
+    scan(payload)
+    return found
+
+
+def _result_score_fallback(payload, team1, team2, known_scores):
+    """Recover the losing score from a completed 'won by N runs' result."""
+    text = _payload_status_text(payload)
+    m = re.search(r"(?i)(.+?)\s+won\s+by\s+(\d+)\s+runs?", text)
+    if not m:
+        return {}
+    winner = _clean(m.group(1))
+    margin = int(m.group(2))
+    winner_key = "team1" if _team_matches(winner, team1) else ("team2" if _team_matches(winner, team2) else "")
+    if not winner_key or not known_scores.get(winner_key):
+        return {}
+    try:
+        winner_runs = int(re.search(r"^\s*(\d+)", str(known_scores[winner_key]["runs"])).group(1))
+    except Exception:
+        return {}
+    loser_key = "team2" if winner_key == "team1" else "team1"
+    loser_runs = winner_runs - margin
+    if loser_runs < 0:
+        return {}
+    return {loser_key: {"runs": loser_runs, "wickets": 10}}
+
+
 def _resolve_batting_index(match, team1, team2, score, wickets, fallback):
     payload = _live_data(match)
     # matchHeader.currBatTeamId is the strongest team-identity signal during
@@ -370,8 +492,11 @@ def _extract_live(match):
     batting_team = _team_name(bat_score_obj) or _team_name(bat_obj) or _clean(mini.get("batTeamName") or mini.get("batTeamShortName"))
     # Prefer matchHeader.currBatTeamId over a stale miniscore team label.
     header_batting_team = _header_current_batting_team(payload, team1, team2)
+    status_batting_team = _status_batting_team(payload, team1, team2)
     if header_batting_team:
         batting_team = header_batting_team
+    elif status_batting_team:
+        batting_team = status_batting_team
     score = bat_obj.get("teamScore", bat_obj.get("score", mini.get("teamScore")))
     wickets = bat_obj.get("teamWkts", bat_obj.get("wickets", mini.get("teamWkts")))
     overs = mini.get("overs", mini.get("oversStr", ""))
@@ -413,6 +538,15 @@ def _extract_live(match):
                 overs = row.get("overs", "")
 
     historical = main.historical_scores(payload, team1, team2)
+    # Feed text sometimes contains the exact current score even when the
+    # structured miniscore/header fields are temporarily empty.
+    mentioned = _team_score_mentions(payload, team1, team2)
+    for key, row in mentioned.items():
+        if key == "team1" and not historical.get("team1"):
+            historical["team1"] = f'{row["runs"]}-{row["wickets"]}'
+        elif key == "team2" and not historical.get("team2"):
+            historical["team2"] = f'{row["runs"]}-{row["wickets"]}'
+
     if score is None or wickets is None:
         if _team_matches(batting_team, team1) and historical.get("team1"):
             score = historical["team1"].split("-")[0]
@@ -420,6 +554,41 @@ def _extract_live(match):
         elif _team_matches(batting_team, team2) and historical.get("team2"):
             score = historical["team2"].split("-")[0]
             wickets = historical["team2"].split("-")[1] if "-" in historical["team2"] else 0
+
+    # Completed result fallback: if the winner's published score is known,
+    # the losing innings can be reconstructed from the run margin.
+    result_rows = _result_score_fallback(payload, team1, team2, {
+        "team1": hs.get("team1") or ({"runs": historical["team1"].split("-")[0]} if historical.get("team1") else None),
+        "team2": hs.get("team2") or ({"runs": historical["team2"].split("-")[0]} if historical.get("team2") else None),
+    })
+    if result_rows:
+        for key, row in result_rows.items():
+            historical[key] = f'{row["runs"]}-{row["wickets"]}'
+        if score is None or wickets is None:
+            key = "team1" if _team_matches(batting_team, team1) else "team2"
+            if key in result_rows:
+                score = result_rows[key]["runs"]
+                wickets = result_rows[key]["wickets"]
+
+    # If the feed gives CRR and overs but omits the total, recover the current
+    # runs mathematically. This is exact for the 13-over India A snapshot and
+    # robust for other breaks where the feed drops only the total.
+    if score is None or wickets is None:
+        try:
+            rr = float(str(crr if "crr" in locals() else mini.get("currentRunRate", mini.get("crr", ""))).replace(",", ""))
+            ov_text = str(overs or "")
+            om = re.match(r"^s*(d+)(?:.(d+))?s*$", ov_text)
+            if om and rr >= 0:
+                whole = int(om.group(1))
+                balls = int((om.group(2) or "0")[:1])
+                balls = min(balls, 5)
+                overs_decimal = whole + (balls / 6.0)
+                score = int(round(overs_decimal * rr))
+                # Preserve a wicket count if another field exposed one.
+                if wickets in (None, ""):
+                    wickets = 0
+        except Exception:
+            pass
 
     if score is None or wickets is None:
         return None
@@ -435,7 +604,11 @@ def _extract_live(match):
     # At innings break/stumps Cricbuzz can switch batTeam to the next innings
     # while teamScore/teamWkts and the batsmen still describe the completed
     # innings. The scorecard is authoritative for which team owns that score.
-    batting_index = _resolve_batting_index(match, team1, team2, score, wickets, batting_index)
+    status_team = _status_batting_team(payload, team1, team2)
+    if status_team:
+        batting_index = 0 if _team_matches(status_team, team1) else 1
+    else:
+        batting_index = _resolve_batting_index(match, team1, team2, score, wickets, batting_index)
 
     striker = _player(mini.get("batsmanStriker"), True)
     non_striker = _player(mini.get("batsmanNonStriker"), False)

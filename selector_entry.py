@@ -2,6 +2,7 @@
 # This file deliberately reuses the production OBS app and only adds the selector.
 from flask import Response, request, jsonify, redirect
 from urllib.parse import quote
+from html import escape
 import re
 import time
 from datetime import datetime
@@ -491,3 +492,8 @@ else:
 if __name__ == "__main__":
     import os
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "10000")))
+# Use the automatic live + upcoming selector in production. It is deliberately
+# assigned after the page function is defined so the older selector cannot win.
+_select_page_endpoint = next((r.endpoint for r in app.url_map.iter_rules() if r.rule == "/select-match"), None)
+if _select_page_endpoint:
+    app.view_functions[_select_page_endpoint] = _selector_page

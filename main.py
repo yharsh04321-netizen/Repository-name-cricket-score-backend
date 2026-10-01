@@ -105,7 +105,12 @@ def clean(v):
 
 def norm_team(s):
     n = re.sub(r"[^a-z0-9]+", "", clean(s).lower())
-    return {"wi":"westindies", "westindies":"westindies", "ind":"india", "india":"india"}.get(n, n)
+    aliases = {
+        "wi":"westindies","westindies":"westindies","ind":"india","india":"india",
+        "jk":"jammukashmir","jammukashmir":"jammukashmir","jammuandkashmir":"jammukashmir",
+        "roi":"restofindia","restofindia":"restofindia",
+    }
+    return aliases.get(n, n)
 
 def same_team(a, b):
     a, b = norm_team(a), norm_team(b)
@@ -329,6 +334,16 @@ def live_detail(mid):
         return None
 
     current_score = live_team_score(bt) or live_team_score(btso)
+    if not current_score and bat:
+        for node in walk(ms):
+            if not isinstance(node, dict):
+                continue
+            node_team = obj_name(node.get("team") or node.get("teamObj") or node.get("teamName") or node.get("batTeam"))
+            if node_team and same_team(node_team, bat):
+                got = score_from_obj(node)
+                if got:
+                    current_score = got
+                    break
     if not current_score:
         direct = find_number(ms, ("teamScore","teamRuns","runs"), "-")
         direct_w = find_number(ms, ("teamWkts","wickets","teamWickets"), 0)
@@ -435,6 +450,17 @@ def live_detail(mid):
     partnership = live_partnership(ms)
     partnership = partnership if partnership not in (None, "") else "-"
 
+    if current_score == "-":
+        try:
+            live_rows = scorecard_innings(fetch_scorecard(mid))
+            matching = [r for r in live_rows if same_team(r.get("team"), bat)]
+            if matching:
+                current_score = matching[-1].get("score", "-")
+                if matching[-1].get("overs") not in (None, ""):
+                    overs = matching[-1]["overs"]
+        except Exception as exc:
+            print("LIVE SCORE FALLBACK ERROR:", repr(exc))
+
     # If the live feed omits teamScore but provides the current partnership,
     # and no wicket has fallen, that partnership is the innings total.
     if current_score == "-" and partnership not in (None, "", "-") and wkts in (None, "", 0, "0"):
@@ -453,8 +479,8 @@ def live_detail(mid):
 
     cr = find_number(ms, ("currentRunRate","crr","currentRR","runRate","currentRunRateStr"), "-")
 
-    # Final live-score fallback: if Cricbuzz omits teamScore, use the live
-    # overs + current run rate to recover the displayed innings total.
+    # Last-resort arithmetic fallback only when both live and scorecard
+    # sources omit the innings total.
     if current_score == "-":
         try:
             ov = float(str(overs).replace(",", ""))
@@ -464,10 +490,16 @@ def live_detail(mid):
         except Exception:
             pass
 
-    # No wicket lost means the partnership is the innings total if the feed
-    # does not provide a partnership field.
-    if partnership == "-" and wkts in (None, "", 0, "0") and current_score != "-":
-        partnership = str(current_score).split("-", 1)[0]
+    # If Cricbuzz omits partnership, use the current pair's combined runs
+    # only when no wicket has fallen. Otherwise do not invent a value.
+    if partnership == "-" and wkts in (None, "", 0, "0"):
+        try:
+            r1 = float(str((striker or {}).get("runs", 0)).replace(",", ""))
+            r2 = float(str((non or {}).get("runs", 0)).replace(",", ""))
+            partnership = str(int(round(r1 + r2)))
+        except Exception:
+            if current_score != "-":
+                partnership = str(current_score).split("-", 1)[0]
 
     # Apply the recovered live score only to the current batting team.
     if bat and current_score != "-":

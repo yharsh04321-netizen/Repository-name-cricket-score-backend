@@ -590,6 +590,20 @@ def _extract_live(match):
     # Prefer matchHeader.currBatTeamId over a stale miniscore team label.
     header_batting_team = _header_current_batting_team(payload, team1, team2)
     status_batting_team = _status_batting_team(payload, team1, team2)
+    # If the live JSON omits the final/result status, use the public match page
+    # as the same generic innings-identity fallback. This is especially useful
+    # after a match has finished, while still being safe for active matches:
+    # the page only overrides the team when it contains an explicit result.
+    if not header_batting_team and not status_batting_team:
+        try:
+            snap = _scorecard_snapshot(match)
+            page_text = snap.get("text", "") if isinstance(snap, dict) else ""
+            if page_text:
+                status_batting_team = _status_batting_team(
+                    {"status": page_text}, team1, team2
+                )
+        except Exception:
+            pass
     if header_batting_team:
         batting_team = header_batting_team
     elif status_batting_team:

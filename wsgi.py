@@ -273,12 +273,37 @@ def _header_team_scores(payload, team1, team2):
     return result
 
 
+def _header_current_batting_team(payload, team1, team2):
+    """Resolve the current innings from matchHeader.currBatTeamId.
+    This is especially important at innings breaks/stumps, where miniscore
+    can temporarily point at the wrong/previous innings while batsmen and
+    scores still belong to the current batting side.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    header = payload.get("matchHeader") or {}
+    curr = header.get("currBatTeamId") or header.get("currentBatTeamId")
+    if curr in (None, ""):
+        return ""
+    for key, team in (("team1", team1), ("team2", team2)):
+        obj = header.get(key) or {}
+        if isinstance(obj, dict):
+            tid = obj.get("teamId") or obj.get("id")
+            if tid not in (None, "") and str(tid) == str(curr):
+                return team
+    return ""
+
+
 def _resolve_batting_index(match, team1, team2, score, wickets, fallback):
-    # The live miniscore already identifies the batting team. Only consult a
-    # scorecard page when the live team identity is genuinely ambiguous.
-    # This prevents every polling request from depending on a stale/broken
-    # scorecard API endpoint.
     payload = _live_data(match)
+    # matchHeader.currBatTeamId is the strongest team-identity signal during
+    # innings breaks/stumps and for completed limited-overs matches.
+    header_team = _header_current_batting_team(payload, team1, team2)
+    if _team_matches(header_team, team1):
+        return 0
+    if _team_matches(header_team, team2):
+        return 1
+
     mini = (payload or {}).get("miniscore") or {}
     live_team = (
         _team_name(mini.get("batTeamScoreObj") or {})
@@ -343,6 +368,10 @@ def _extract_live(match):
     bat_obj = mini.get("batTeam") or {}
     bat_score_obj = mini.get("batTeamScoreObj") or {}
     batting_team = _team_name(bat_score_obj) or _team_name(bat_obj) or _clean(mini.get("batTeamName") or mini.get("batTeamShortName"))
+    # Prefer matchHeader.currBatTeamId over a stale miniscore team label.
+    header_batting_team = _header_current_batting_team(payload, team1, team2)
+    if header_batting_team:
+        batting_team = header_batting_team
     score = bat_obj.get("teamScore", bat_obj.get("score", mini.get("teamScore")))
     wickets = bat_obj.get("teamWkts", bat_obj.get("wickets", mini.get("teamWkts")))
     overs = mini.get("overs", mini.get("oversStr", ""))
@@ -366,8 +395,11 @@ def _extract_live(match):
             wickets = row.get("wickets", 0)
             if overs in (None, ""):
                 overs = row.get("overs", "")
+    # Header matchScore is the reliable fallback for breaks/stumps and
+    # completed innings. If it is absent, use score-bearing objects already
+    # present in the commentary response before giving up.
+    hs = _header_team_scores(payload, team1, team2)
     if score is None or wickets is None:
-        hs = _header_team_scores(payload, team1, team2)
         if _team_matches(batting_team, team1) and hs.get("team1"):
             row = hs["team1"]
         elif _team_matches(batting_team, team2) and hs.get("team2"):
@@ -379,6 +411,16 @@ def _extract_live(match):
             wickets = row.get("wickets", 0)
             if overs in (None, ""):
                 overs = row.get("overs", "")
+
+    historical = main.historical_scores(payload, team1, team2)
+    if score is None or wickets is None:
+        if _team_matches(batting_team, team1) and historical.get("team1"):
+            score = historical["team1"].split("-")[0]
+            wickets = historical["team1"].split("-")[1] if "-" in historical["team1"] else 0
+        elif _team_matches(batting_team, team2) and historical.get("team2"):
+            score = historical["team2"].split("-")[0]
+            wickets = historical["team2"].split("-")[1] if "-" in historical["team2"] else 0
+
     if score is None or wickets is None:
         return None
 
@@ -433,6 +475,21 @@ def _extract_live(match):
     crr = mini.get("currentRunRate", mini.get("crr", "-"))
     current_over = _current_over_data(payload)
     result = {"title": f"{team1} vs {team2}", "url": match.get("url", ""), "team1": team1, "team2": team2, "team1_code": main.team_code(team1), "team2_code": main.team_code(team2), "team1_flag": main.team_flag(team1), "team2_flag": main.team_flag(team2), "team1_score": "-", "team2_score": "-", "team1_overs": "", "team2_overs": "", "crr": str(crr), "partnership": partnership, "status": _clean(mini.get("status") or header.get("status") or "LIVE"), "batsmen": batsmen[:2], "bowler": live_bowler, "captains": _captains(match, team1, team2), "batting_index": batting_index, "bowling_index": 1 - batting_index, "current_over": current_over}
+
+    # Preserve both teams' published totals when available. This fixes
+    # completed ODI/Tests where miniscore only exposes the current innings.
+    for key, row in hs.items():
+        if key == "team1":
+            result["team1_score"] = f'{row.get("runs")}-{row.get("wickets", 0)}'
+            result["team1_overs"] = str(row.get("overs", ""))
+        elif key == "team2":
+            result["team2_score"] = f'{row.get("runs")}-{row.get("wickets", 0)}'
+            result["team2_overs"] = str(row.get("overs", ""))
+
+    for key, value in historical.items():
+        if result.get(key + "_score") in (None, "", "-") and value:
+            result[key + "_score"] = value
+
     result[f"team{batting_index + 1}_score"] = f"{score}-{wickets}"
     result[f"team{batting_index + 1}_overs"] = str(overs)
     return result

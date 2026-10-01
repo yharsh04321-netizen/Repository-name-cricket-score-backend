@@ -462,7 +462,7 @@ def _fallback_live(match):
     }
 
 
-def _fixed_selected_score():
+def _legacy_fixed_selected_score():
     mid = str(request.args.get("match_id", "")).strip()
     if not mid.isdigit():
         return jsonify({"match": None, "error": "match_id is required"}), 400

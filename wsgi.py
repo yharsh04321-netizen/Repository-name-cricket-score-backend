@@ -254,7 +254,14 @@ def _scorecard_snapshot(match):
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         text = _clean(soup.get_text(" ", strip=True))
-        data = {"text": text, "scores": _parse_public_score_text(text, match.get("team1", ""), match.get("team2", ""))}
+        page_t1 = _clean(match.get("team1") or match.get("team1Name"))
+        page_t2 = _clean(match.get("team2") or match.get("team2Name"))
+        if not page_t1 or not page_t2:
+            try:
+                page_t1, page_t2 = main.extract_teams(match.get("name", ""))
+            except Exception:
+                page_t1, page_t2 = "", ""
+        data = {"text": text, "scores": _parse_public_score_text(text, page_t1, page_t2)}
         SCORECARD_CACHE[mid] = {"time": now, "data": data}
         return data
     except Exception as exc:

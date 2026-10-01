@@ -69,20 +69,40 @@ def _raw_score_fix(match, data):
     runs = bat.get("teamScore", bat.get("score", mini.get("teamScore")))
     wickets = bat.get("teamWkts", bat.get("wickets", mini.get("teamWkts")))
     overs = mini.get("overs", mini.get("oversStr", ""))
-    if runs is None or wickets is None:
-        return data
-    score = f"{runs}-{wickets}"
 
-    if wsgi._team_matches(bat_name, t1):
-        idx = 0
-    elif wsgi._team_matches(bat_name, t2):
-        idx = 1
-    else:
-        idx = data.get("batting_index", 0)
-        try:
-            idx = int(idx)
-        except Exception:
+    # Prefer matchHeader.currBatTeamId when deciding which side owns the
+    # current innings. This remains correct at stumps/innings breaks even if
+    # miniscore.batTeam is stale.
+    curr_id = header.get("currBatTeamId") or header.get("currentBatTeamId")
+    idx = None
+    if curr_id not in (None, ""):
+        for candidate, obj in ((0, t1obj), (1, t2obj)):
+            tid = obj.get("teamId") or obj.get("id") if isinstance(obj, dict) else None
+            if tid not in (None, "") and str(tid) == str(curr_id):
+                idx = candidate
+                break
+    if idx is None:
+        if wsgi._team_matches(bat_name, t1):
             idx = 0
+        elif wsgi._team_matches(bat_name, t2):
+            idx = 1
+        else:
+            idx = data.get("batting_index", 0)
+            try:
+                idx = int(idx)
+            except Exception:
+                idx = 0
+
+    # If miniscore has no total, leave the richer wsgi result untouched.
+    # It may already contain matchHeader/historical score recovery.
+    if runs is None or wickets is None:
+        data["team1"] = t1 or data.get("team1", "TEAM 1")
+        data["team2"] = t2 or data.get("team2", "TEAM 2")
+        data["batting_index"] = idx
+        data["bowling_index"] = 1 - idx
+        return data
+
+    score = f"{runs}-{wickets}"
 
     key = str(wsgi._match_id(match))
     mem = SCORE_MEMORY.setdefault(key, {"team1_score": "-", "team2_score": "-", "team1_overs": "", "team2_overs": ""})

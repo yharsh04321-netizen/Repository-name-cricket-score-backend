@@ -264,18 +264,20 @@ def partnership_from_feed(data, ms, current_score):
                     if got is not None:
                         return got
 
-    # Cricbuzz can expose partnership/last-wicket information elsewhere in
-    # the live response. Search only current-response objects, preferring
-    # explicit partnership keys.
-    for node in walk(data):
-        if not isinstance(node, dict):
-            continue
-        for k, v in node.items():
-            lk = str(k).lower().replace("_", "")
-            if "partnership" in lk:
-                got = parse_value(v)
-                if got is not None:
-                    return got
+    # Partnership may also be attached to the newest commentary object.
+    # Search newest-first so an older innings partnership cannot overwrite
+    # the current pair's value.
+    commentary = data.get("matchCommentary") if isinstance(data, dict) else None
+    nodes = commentary if isinstance(commentary, list) else [commentary]
+    for node in reversed(nodes):
+        for obj in walk(node):
+            if not isinstance(obj, dict):
+                continue
+            for k, v in obj.items():
+                if "partnership" in str(k).lower():
+                    got = parse_value(v)
+                    if got is not None:
+                        return got
 
     # Exact fallback: current score minus the score at the last wicket.
     # This remains correct even when the two batter totals don't equal the
@@ -569,6 +571,12 @@ def live_detail(mid):
                 current_score = score_text(int(round(ov * rr)), wkts)
         except Exception:
             pass
+
+    # Re-run partnership extraction after scorecard fallback, because the
+    # current innings total may have become available only at this point.
+    refreshed_partnership = partnership_from_feed(data, ms, current_score)
+    if refreshed_partnership is not None:
+        partnership = str(refreshed_partnership)
 
     # Only use batter totals as a last-resort display fallback. The feed
     # extractor above is preferred because extras mean batter runs can differ

@@ -541,11 +541,10 @@ def _extract_live(match):
     # Feed text sometimes contains the exact current score even when the
     # structured miniscore/header fields are temporarily empty.
     mentioned = _team_score_mentions(payload, team1, team2)
+    # An explicit team-labelled score is newer/more specific than a generic
+    # historical scan, so let it replace an older innings value.
     for key, row in mentioned.items():
-        if key == "team1" and not historical.get("team1"):
-            historical["team1"] = f'{row["runs"]}-{row["wickets"]}'
-        elif key == "team2" and not historical.get("team2"):
-            historical["team2"] = f'{row["runs"]}-{row["wickets"]}'
+        historical[key] = f'{row["runs"]}-{row["wickets"]}'
 
     if score is None or wickets is None:
         if _team_matches(batting_team, team1) and historical.get("team1"):

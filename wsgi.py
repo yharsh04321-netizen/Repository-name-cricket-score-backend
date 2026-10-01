@@ -204,10 +204,10 @@ def _parse_public_score_text(text, team1="", team2=""):
             return []
         a = re.escape(_clean(alias))
         # Allow spaces/hyphens to vary in names such as India A Women.
-        a = a.replace(r"\\ ", r"\\s+").replace(r"\\-", r"\\s*-?\\s*")
+        a = a.replace(r"\ ", r"\s+").replace(r"\-", r"\s*-?\s*")
         return [
-            re.compile(r"(?i)" + a + r".{0,140}?(\\d+)\\s*[-/]\\s*(\\d+)(?:\\s*\\((\\d+(?:\\.\\d+)?)\\s*(?:ov|overs?)\\))?"),
-            re.compile(r"(?i)" + a + r".{0,140}?(\\d+)\\s*/\\s*(\\d+)(?:\\s*\\((\\d+(?:\\.\\d+)?)\\s*(?:ov|overs?)\\))?"),
+            re.compile(r"(?i)" + a + r".{0,140}?(\d+)\s*[-/]\s*(\d+)(?:\s*\((\d+(?:\.\d+)?)\s*(?:ov|overs?)\))?"),
+            re.compile(r"(?i)" + a + r".{0,140}?(\d+)\s*/\s*(\d+)(?:\s*\((\d+(?:\.\d+)?)\s*(?:ov|overs?)\))?"),
         ]
 
     for key, team in (("team1", team1), ("team2", team2)):
@@ -367,7 +367,7 @@ def _payload_status_text(payload):
                     if not text:
                         continue
                     if lk in status_keys or re.search(
-                        r"(?i)\\b(?:won|win|lost|beat|need|requires|require|trail|lead)\\b",
+                        r"(?i)\b(?:won|win|lost|beat|need|requires|require|trail|lead)\b",
                         text,
                     ):
                         parts.append(text)

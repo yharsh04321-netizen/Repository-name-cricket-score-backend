@@ -287,7 +287,9 @@ else:
 
 if __name__ == "__main__":
     import os
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "10000")))def _selector_page():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "10000")))
+
+def _selector_page():
     selected = str(request.args.get("selected", "")).strip()
     live_matches = get_matches()
     upcoming_matches = get_upcoming_matches([m["id"] for m in live_matches])

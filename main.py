@@ -300,7 +300,7 @@ def live_detail(mid):
         for k in ("score", "teamScoreStr", "scoreStr"):
             v = node.get(k)
             if isinstance(v, str):
-                m = re.search(r"(\\d+)\\s*[-/]\\s*(\\d+)", v)
+                m = re.search(r"(\d+)\s*[-/]\s*(\d+)", v)
                 if m:
                     return f"{m.group(1)}-{m.group(2)}"
         for k in ("teamScore", "teamRuns", "runs", "scoreRuns", "totalRuns"):

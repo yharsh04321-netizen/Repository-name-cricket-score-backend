@@ -335,7 +335,7 @@ def live_detail(mid):
         current_score = score_text(direct, direct_w)
     overs = find_number(ms, ("overs","teamOvers","batOvers"), "")
     wkts = 0
-    score_match = re.search(r"^(\\d+)\\s*[-/]\\s*(\\d+)$", str(current_score)) if current_score != "-" else None
+    score_match = re.search(r"^(\d+)\s*[-/]\s*(\d+)$", str(current_score)) if current_score != "-" else None
     if score_match:
         wkts = score_match.group(2)
     else:

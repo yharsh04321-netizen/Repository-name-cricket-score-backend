@@ -409,6 +409,18 @@ def _status_batting_team(payload, team1, team2):
     if not text:
         return ""
 
+    # Completed-match result text is stronger than commentary/target words.
+    # Resolve it first so a historical "need N runs" sentence cannot make
+    # the previous innings look like the active batting side.
+    if re.search(r"(?i)\bwon\s+by\s+\d+\s+runs?", text):
+        for winner, loser in ((team1, team2), (team2, team1)):
+            if _norm(winner) and _norm(winner) in _norm(text):
+                return loser
+    if re.search(r"(?i)\bwon\s+by\s+\d+\s+wickets?", text):
+        for team in (team1, team2):
+            if _norm(team) and _norm(team) in _norm(text):
+                return team
+
     # Chase / target language is explicit. Status strings often have a
     # prefix such as "Day 3 - Stump -", so match the team name anywhere in
     # the phrase instead of requiring the capture to equal the team exactly.

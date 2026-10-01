@@ -291,17 +291,48 @@ def live_detail(mid):
     # historical scorecard/header data so the main score cannot go stale.
     bt = ms.get("batTeam") or {}
     btso = ms.get("batTeamScoreObj") or {}
-    runs = bt.get("teamScore") if isinstance(bt, dict) else None
-    if runs in (None, ""):
-        runs = btso.get("teamScore") if isinstance(btso, dict) else None
-    if runs in (None, ""):
-        runs = find_number(ms, ("teamScore","teamRuns","runs"), "-")
-    wkts = bt.get("teamWkts") if isinstance(bt, dict) else None
-    if wkts in (None, ""):
-        wkts = btso.get("teamWkts") if isinstance(btso, dict) else None
-    if wkts in (None, ""):
-        wkts = find_number(ms, ("teamWkts","wickets","teamWickets"), 0)
-    current_score = score_text(runs, wkts)
+
+    # Live score can arrive in several shapes. Read the live batting-team
+    # object first, including nested score objects/score strings.
+    def live_team_score(node):
+        if not isinstance(node, dict):
+            return None
+        for k in ("score", "teamScoreStr", "scoreStr"):
+            v = node.get(k)
+            if isinstance(v, str):
+                m = re.search(r"(\\d+)\\s*[-/]\\s*(\\d+)", v)
+                if m:
+                    return f"{m.group(1)}-{m.group(2)}"
+        for k in ("teamScore", "teamRuns", "runs", "scoreRuns", "totalRuns"):
+            v = node.get(k)
+            if isinstance(v, dict):
+                got = live_team_score(v)
+                if got:
+                    return got
+            elif v not in (None, ""):
+                wk = None
+                for wk_key in ("teamWkts", "wickets", "teamWickets", "scoreWickets"):
+                    wv = node.get(wk_key)
+                    if wv not in (None, "") and not isinstance(wv, (dict, list)):
+                        wk = wv
+                        break
+                try:
+                    float(str(v).replace(",", ""))
+                    return score_text(v, wk)
+                except Exception:
+                    pass
+        for v in node.values():
+            if isinstance(v, dict):
+                got = live_team_score(v)
+                if got:
+                    return got
+        return None
+
+    current_score = live_team_score(bt) or live_team_score(btso)
+    if not current_score:
+        direct = find_number(ms, ("teamScore","teamRuns","runs"), "-")
+        direct_w = find_number(ms, ("teamWkts","wickets","teamWickets"), 0)
+        current_score = score_text(direct, direct_w)
     overs = find_number(ms, ("overs","teamOvers","batOvers"), "")
 
     # Partnership is also part of the live miniscore on some Cricbuzz
@@ -389,6 +420,23 @@ def live_detail(mid):
     bow = ms.get("bowlerStriker") or ms.get("bowler") or ms.get("currentBowler") or {}
     partnership = live_partnership(ms)
     partnership = partnership if partnership not in (None, "") else "-"
+
+    # If the live feed omits teamScore but provides the current partnership,
+    # and no wicket has fallen, that partnership is the innings total.
+    if current_score == "-" and partnership not in (None, "", "-") and wkts in (None, "", 0, "0"):
+        try:
+            p = float(str(partnership).replace(",", ""))
+            if p >= 0 and p.is_integer() and bat:
+                current_score = score_text(int(p), 0)
+                if same_team(bat, t1):
+                    state["team1"] = current_score
+                    state["bat"] = t1
+                elif same_team(bat, t2):
+                    state["team2"] = current_score
+                    state["bat"] = t2
+        except Exception:
+            pass
+
     cr = find_number(ms, ("currentRunRate","crr","currentRR","runRate","currentRunRateStr"), "-")
     status = clean(ms.get("status") or ms.get("matchStatus") or "LIVE")
 

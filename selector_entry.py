@@ -231,6 +231,55 @@ def _fallback_live(match):
     }
 
 
+
+def _public_page_score_fallback(match):
+    """Last-resort generic fallback using the public Cricbuzz match page."""
+    try:
+        snap = entry.wsgi._scorecard_snapshot(match)
+        if not isinstance(snap, dict):
+            return None
+        t1, t2 = main.extract_teams(str(match.get("name") or ""))
+        if not t1 or not t2:
+            return None
+        scores = snap.get("scores") or {}
+        if not isinstance(scores, dict):
+            scores = {}
+        s1 = scores.get("team1") if isinstance(scores.get("team1"), dict) else None
+        s2 = scores.get("team2") if isinstance(scores.get("team2"), dict) else None
+        text = str(snap.get("text") or "")
+        try:
+            status_team = entry.wsgi._status_batting_team({"status": text}, t1, t2)
+        except Exception:
+            status_team = None
+        if status_team:
+            bi = 0 if entry.wsgi._team_matches(status_team, t1) else 1
+        elif s1 and not s2:
+            bi = 0
+        elif s2 and not s1:
+            bi = 1
+        else:
+            bi = 0
+        result = {
+            "title": f"{t1} vs {t2}", "url": match.get("url", ""),
+            "team1": t1, "team2": t2,
+            "team1_code": main.team_code(t1), "team2_code": main.team_code(t2),
+            "team1_flag": main.team_flag(t1), "team2_flag": main.team_flag(t2),
+            "team1_score": f"{s1.get('runs')}-{s1.get('wickets', 0)}" if s1 else "-",
+            "team2_score": f"{s2.get('runs')}-{s2.get('wickets', 0)}" if s2 else "-",
+            "team1_overs": str(s1.get("overs", "")) if s1 else "",
+            "team2_overs": str(s2.get("overs", "")) if s2 else "",
+            "crr": "-", "partnership": "-",
+            "status": "LIVE / SCORECARD FALLBACK",
+            "batsmen": [], "bowler": None,
+            "captains": entry.wsgi._captains(match, t1, t2),
+            "batting_index": bi, "bowling_index": 1 - bi,
+            "current_over": {"over": "", "balls": [], "free_hit": False, "last_ball": ""},
+        }
+        return result if (s1 or s2) else None
+    except Exception as exc:
+        print("public page score fallback failed:", repr(exc))
+        return None
+
 def _fixed_selected_score():
     """Production score endpoint: never turn parser failures into HTTP 500."""
     mid = str(request.args.get("match_id", "")).strip()
@@ -266,6 +315,12 @@ def _fixed_selected_score():
                 data = entry._raw_score_fix(match, data)
             except Exception as exc:
                 print("selected-score raw score fix skipped:", repr(exc))
+
+        if data is None:
+            try:
+                data = _public_page_score_fallback(match)
+            except Exception as exc:
+                print("selected-score public page fallback skipped:", repr(exc))
 
         payload = {"match": data, "error": None if data else "live score temporarily unavailable"}
     except Exception as exc:

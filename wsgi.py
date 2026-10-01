@@ -189,6 +189,52 @@ def _live_data(match):
         return cached["data"] if cached else None
 
 
+def _parse_public_score_text(text, team1="", team2=""):
+    """Parse team-labelled scores from the public Cricbuzz match page.
+    This intentionally does not depend on the deprecated /scard API or on a
+    helper that may not exist in older deployments.
+    """
+    text = _clean(text)
+    found = {}
+    if not text:
+        return found
+
+    def patterns(alias):
+        if not alias:
+            return []
+        a = re.escape(_clean(alias))
+        # Allow spaces/hyphens to vary in names such as India A Women.
+        a = a.replace(r"\\ ", r"\\s+").replace(r"\\-", r"\\s*-?\\s*")
+        return [
+            re.compile(r"(?i)" + a + r".{0,140}?(\\d+)\\s*[-/]\\s*(\\d+)(?:\\s*\\((\\d+(?:\\.\\d+)?)\\s*(?:ov|overs?)\\))?"),
+            re.compile(r"(?i)" + a + r".{0,140}?(\\d+)\\s*/\\s*(\\d+)(?:\\s*\\((\\d+(?:\\.\\d+)?)\\s*(?:ov|overs?)\\))?"),
+        ]
+
+    for key, team in (("team1", team1), ("team2", team2)):
+        aliases = [team, main.team_code(team)]
+        # Common feed abbreviations.
+        norm = _norm(team)
+        if "indiaa" in norm:
+            aliases += ["INDA"]
+        if "australiaa" in norm:
+            aliases += ["AUSA"]
+        if "indiaawomen" in norm or "indiaaw" in norm:
+            aliases += ["INDW A", "IND A Women"]
+        if "australiaawomen" in norm or "australiaaw" in norm:
+            aliases += ["AUSW A", "AUS A Women"]
+        for alias in dict.fromkeys(aliases):
+            for rx in patterns(alias):
+                m = rx.search(text)
+                if not m:
+                    continue
+                runs, wickets, overs = m.group(1), m.group(2), m.group(3) or ""
+                found[key] = {"runs": int(runs), "wickets": int(wickets), "overs": overs}
+                break
+            if key in found:
+                break
+    return found
+
+
 def _scorecard_snapshot(match):
     """Best-effort scorecard snapshot from the public match page.
     The old /api/mcenter/v1/{id}/scard endpoint now returns 404 for many
@@ -208,7 +254,7 @@ def _scorecard_snapshot(match):
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         text = _clean(soup.get_text(" ", strip=True))
-        data = {"text": text, "scores": main.parse_scores(text)}
+        data = {"text": text, "scores": _parse_public_score_text(text, match.get("team1", ""), match.get("team2", ""))}
         SCORECARD_CACHE[mid] = {"time": now, "data": data}
         return data
     except Exception as exc:
@@ -300,19 +346,41 @@ def _missing_live_value(value):
 
 
 def _payload_status_text(payload):
-    """Collect the compact status/result strings published by the live feed."""
+    """Collect result/status text from the whole feed, not only top-level nodes.
+    Cricbuzz sometimes nests the completed-match result or innings status under
+    matchInfo/matchScore/commentary metadata while miniscore is still stale.
+    """
     if not isinstance(payload, dict):
         return ""
-    mini = payload.get("miniscore") or {}
-    header = payload.get("matchHeader") or {}
     parts = []
-    for node in (mini, header):
+    status_keys = {
+        "status", "matchstatus", "statustext", "result", "resulttext",
+        "description", "matchresult", "matchstatustext", "summary"
+    }
+
+    def scan(node):
         if isinstance(node, dict):
-            for key in ("status", "matchStatus", "statusText", "result", "resultText", "description"):
-                value = node.get(key)
-                if isinstance(value, str) and value.strip():
-                    parts.append(value)
-    return " ".join(_clean(x) for x in parts if x)
+            for key, value in node.items():
+                lk = re.sub(r"[^a-z0-9]", "", str(key).lower())
+                if isinstance(value, str):
+                    text = _clean(value)
+                    if not text:
+                        continue
+                    if lk in status_keys or re.search(
+                        r"(?i)\\b(?:won|win|lost|beat|need|requires|require|trail|lead)\\b",
+                        text,
+                    ):
+                        parts.append(text)
+                elif isinstance(value, (dict, list)):
+                    scan(value)
+        elif isinstance(node, list):
+            for value in node:
+                scan(value)
+
+    scan(payload)
+    # Keep the compact top-level fields first; duplicates are harmless but
+    # make result matching more reliable when the feed contains several copies.
+    return " ".join(dict.fromkeys(parts))
 
 
 def _status_batting_team(payload, team1, team2):
@@ -525,6 +593,15 @@ def _extract_live(match):
     # completed innings. If it is absent, use score-bearing objects already
     # present in the commentary response before giving up.
     hs = _header_team_scores(payload, team1, team2)
+    # Public scorecard-page parsing is the final generic fallback for completed
+    # matches/innings breaks where both miniscore and matchHeader omit totals.
+    try:
+        ps = _scorecard_team_scores(match, team1, team2)
+        for key, row in ps.items():
+            if key not in hs:
+                hs[key] = row
+    except Exception:
+        pass
     if _missing_live_value(score) or _missing_live_value(wickets):
         if _team_matches(batting_team, team1) and hs.get("team1"):
             row = hs["team1"]

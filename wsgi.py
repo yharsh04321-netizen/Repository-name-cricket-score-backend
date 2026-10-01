@@ -190,14 +190,21 @@ def _live_data(match):
 
 
 def _scorecard_snapshot(match):
+    """Best-effort scorecard snapshot from the public match page.
+    The old /api/mcenter/v1/{id}/scard endpoint now returns 404 for many
+    matches, so it must never be the primary live-score dependency.
+    """
     mid = _match_id(match)
     now = time.time()
     cached = SCORECARD_CACHE.get(mid)
     if cached and now - cached["time"] < SCORECARD_CACHE_SECONDS:
         return cached["data"]
+
     try:
-        url = main.scorecard_url(match.get("url", ""))
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        page_url = str(match.get("url", "") or "")
+        if not page_url or "cricbuzz.com/live-cricket-scores/" not in page_url:
+            page_url = f"https://www.cricbuzz.com/live-cricket-scores/{mid}"
+        r = requests.get(page_url, headers=HEADERS, timeout=10)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         text = _clean(soup.get_text(" ", strip=True))
@@ -205,8 +212,13 @@ def _scorecard_snapshot(match):
         SCORECARD_CACHE[mid] = {"time": now, "data": data}
         return data
     except Exception as exc:
-        print("scorecard snapshot error:", repr(exc))
-        return cached["data"] if cached else None
+        # Do not turn a live-score request into a scorecard failure. Keep the
+        # last successful snapshot, if any, and otherwise cache the miss briefly.
+        if cached:
+            return cached["data"]
+        SCORECARD_CACHE[mid] = {"time": now, "data": None}
+        print("scorecard page fallback unavailable:", repr(exc))
+        return None
 
 
 def _scorecard_team_scores(match, team1, team2):
@@ -262,19 +274,21 @@ def _header_team_scores(payload, team1, team2):
 
 
 def _resolve_batting_index(match, team1, team2, score, wickets, fallback):
-    snapshot = _scorecard_snapshot(match)
-    if not snapshot:
-        return fallback
-    target_runs = str(score)
-    target_wickets = str(wickets)
-    for item in snapshot.get("scores", []):
-        if str(item.get("runs")) != target_runs or str(item.get("wickets")) != target_wickets:
-            continue
-        code = item.get("code", "")
-        if _team_matches(code, team1):
-            return 0
-        if _team_matches(code, team2):
-            return 1
+    # The live miniscore already identifies the batting team. Only consult a
+    # scorecard page when the live team identity is genuinely ambiguous.
+    # This prevents every polling request from depending on a stale/broken
+    # scorecard API endpoint.
+    payload = _live_data(match)
+    mini = (payload or {}).get("miniscore") or {}
+    live_team = (
+        _team_name(mini.get("batTeamScoreObj") or {})
+        or _team_name(mini.get("batTeam") or {})
+        or _clean(mini.get("batTeamName") or mini.get("batTeamShortName"))
+    )
+    if _team_matches(live_team, team1):
+        return 0
+    if _team_matches(live_team, team2):
+        return 1
     return fallback
 
 

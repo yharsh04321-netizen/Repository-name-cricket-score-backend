@@ -286,15 +286,59 @@ def live_detail(mid):
     ms = data.get("miniscore") or {}
     t1, t2 = teams_from_json(data)
     bat = batting_team(ms)
+    # Cricbuzz's live miniscore keeps the current innings score inside
+    # miniscore.batTeam (teamScore/teamWkts). Prefer that live object over
+    # historical scorecard/header data so the main score cannot go stale.
+    bt = ms.get("batTeam") or {}
     btso = ms.get("batTeamScoreObj") or {}
-    runs = btso.get("teamScore")
+    runs = bt.get("teamScore") if isinstance(bt, dict) else None
+    if runs in (None, ""):
+        runs = btso.get("teamScore") if isinstance(btso, dict) else None
     if runs in (None, ""):
         runs = find_number(ms, ("teamScore","teamRuns","runs"), "-")
-    wkts = btso.get("teamWkts")
+    wkts = bt.get("teamWkts") if isinstance(bt, dict) else None
+    if wkts in (None, ""):
+        wkts = btso.get("teamWkts") if isinstance(btso, dict) else None
     if wkts in (None, ""):
         wkts = find_number(ms, ("teamWkts","wickets","teamWickets"), 0)
     current_score = score_text(runs, wkts)
     overs = find_number(ms, ("overs","teamOvers","batOvers"), "")
+
+    # Partnership is also part of the live miniscore on some Cricbuzz
+    # responses, but its exact key/nesting can vary. Search the live
+    # miniscore only and prefer the explicit partnership fields.
+    def live_partnership(node):
+        if isinstance(node, dict):
+            preferred = ("partnership", "partnershipScore", "partnershipRuns",
+                         "partnerShip", "partnershipScoreObj")
+            for key in preferred:
+                if key in node:
+                    v = node.get(key)
+                    if isinstance(v, dict):
+                        for rk in ("runs", "score", "partnershipRuns", "value"):
+                            rv = v.get(rk)
+                            if rv not in (None, "") and not isinstance(rv, (dict, list)):
+                                return rv
+                    elif v not in (None, "") and not isinstance(v, (dict, list)):
+                        return v
+            for k, v in node.items():
+                if isinstance(k, str) and "partnership" in k.lower():
+                    if isinstance(v, dict):
+                        for rk in ("runs", "score", "partnershipRuns", "value"):
+                            rv = v.get(rk)
+                            if rv not in (None, "") and not isinstance(rv, (dict, list)):
+                                return rv
+                    elif v not in (None, "") and not isinstance(v, (dict, list)):
+                        return v
+                found = live_partnership(v)
+                if found not in (None, ""):
+                    return found
+        elif isinstance(node, list):
+            for v in node:
+                found = live_partnership(v)
+                if found not in (None, ""):
+                    return found
+        return None
 
     state=last_scores.setdefault(mid,{"team1":"-","team2":"-","bat":""})
     # matchHeader.matchScore remains populated during session breaks when miniscore omits teamScore.
@@ -343,9 +387,7 @@ def live_detail(mid):
     striker = ms.get("batsmanStriker") or {}
     non = ms.get("batsmanNonStriker") or {}
     bow = ms.get("bowlerStriker") or ms.get("bowler") or ms.get("currentBowler") or {}
-    partnership = ms.get("partnership") or ms.get("partnershipScore") or ms.get("partnershipRuns")
-    if isinstance(partnership, dict):
-        partnership = partnership.get("runs", partnership.get("score", partnership.get("partnershipRuns", "-")))
+    partnership = live_partnership(ms)
     partnership = partnership if partnership not in (None, "") else "-"
     cr = find_number(ms, ("currentRunRate","crr","currentRR","runRate","currentRunRateStr"), "-")
     status = clean(ms.get("status") or ms.get("matchStatus") or "LIVE")

@@ -258,6 +258,9 @@ def extract_captains(data,t1,t2,mid):
     if mid=="151543":
         result["team1"]=result["team1"] or ({"name":"Shubman Gill","image":""} if same_team(t1,"India") else None)
         result["team2"]=result["team2"] or ({"name":"Shai Hope","image":""} if same_team(t2,"West Indies") else None)
+    if mid=="163077":
+        result["team1"]=result["team1"] or ({"name":"Paras Dogra","image":""} if same_team(t1,"Jammu and Kashmir") else None)
+        result["team2"]=result["team2"] or ({"name":"Rishabh Pant","image":""} if same_team(t2,"Rest of India") else None)
     caps=[]
     for k in ("team1","team2"):
         if result[k]:
@@ -308,9 +311,10 @@ def live_detail(mid):
             elif same_team(row["team"],t2): state["team2"]=row["score"]
         if sc and not header_bat:
             latest=sc[-1]
-            if same_team(latest["team"],t1): bat=t1
-            elif same_team(latest["team"],t2): bat=t2
-            if latest.get("overs"): overs=latest["overs"]
+            # Scorecard is used for totals only. Never use its last innings
+            # to decide the live batting side because it can lag during breaks.
+            if not header_bat and latest.get("overs") and not overs:
+                overs=latest["overs"]
     except Exception as exc:
         print("SCORECARD PARSE ERROR:",repr(exc))
 
@@ -330,6 +334,11 @@ def live_detail(mid):
         if same_team(team_name, t1) and state["team1"] == "-": state["team1"] = sc
         if same_team(team_name, t2) and state["team2"] == "-": state["team2"] = sc
 
+    # miniscore.batTeam is the live source of truth for the current innings.
+    # Do not let historical scorecard innings flip this value.
+    live_bat=batting_team(ms)
+    if live_bat:
+        bat=live_bat
     batting_index = 0 if same_team(bat, t1) else (1 if same_team(bat, t2) else 0)
     striker = ms.get("batsmanStriker") or {}
     non = ms.get("batsmanNonStriker") or {}

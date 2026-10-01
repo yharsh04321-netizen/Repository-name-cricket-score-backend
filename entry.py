@@ -70,28 +70,34 @@ def _raw_score_fix(match, data):
     wickets = bat.get("teamWkts", bat.get("wickets", mini.get("teamWkts")))
     overs = mini.get("overs", mini.get("oversStr", ""))
 
-    # Prefer matchHeader.currBatTeamId when deciding which side owns the
-    # current innings. This remains correct at stumps/innings breaks even if
-    # miniscore.batTeam is stale.
-    curr_id = header.get("currBatTeamId") or header.get("currentBatTeamId")
-    idx = None
-    if curr_id not in (None, ""):
-        for candidate, obj in ((0, t1obj), (1, t2obj)):
-            tid = obj.get("teamId") or obj.get("id") if isinstance(obj, dict) else None
-            if tid not in (None, "") and str(tid) == str(curr_id):
-                idx = candidate
-                break
+    # _extract_live already resolves innings-break/result cases using the
+    # strongest available signals (header ID, status text, and live team).
+    # Preserve that decision here instead of letting a stale currBatTeamId
+    # undo it during the final OBS score response.
+    idx = data.get("batting_index", None)
+    try:
+        idx = int(idx) if idx is not None else None
+    except Exception:
+        idx = None
+    if idx not in (0, 1):
+        idx = None
+
+    if idx is None:
+        curr_id = header.get("currBatTeamId") or header.get("currentBatTeamId")
+        if curr_id not in (None, ""):
+            for candidate, obj in ((0, t1obj), (1, t2obj)):
+                tid = (obj.get("teamId") or obj.get("id")) if isinstance(obj, dict) else None
+                if tid not in (None, "") and str(tid) == str(curr_id):
+                    idx = candidate
+                    break
+
     if idx is None:
         if wsgi._team_matches(bat_name, t1):
             idx = 0
         elif wsgi._team_matches(bat_name, t2):
             idx = 1
         else:
-            idx = data.get("batting_index", 0)
-            try:
-                idx = int(idx)
-            except Exception:
-                idx = 0
+            idx = 0
 
     # If miniscore has no total, leave the richer wsgi result untouched.
     # It may already contain matchHeader/historical score recovery.

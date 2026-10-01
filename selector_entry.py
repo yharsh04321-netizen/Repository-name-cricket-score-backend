@@ -497,3 +497,10 @@ if __name__ == "__main__":
 _select_page_endpoint = next((r.endpoint for r in app.url_map.iter_rules() if r.rule == "/select-match"), None)
 if _select_page_endpoint:
     app.view_functions[_select_page_endpoint] = _selector_page
+
+# The original /select-match route in main.py is GET-only. The production
+# selector uses POST forms for selecting a match, so explicitly allow POST
+# on that existing rule as well as GET.
+for _rule in app.url_map.iter_rules():
+    if _rule.rule == "/select-match":
+        _rule.methods = frozenset(set(_rule.methods or ()) | {"GET", "POST", "HEAD", "OPTIONS"})

@@ -250,7 +250,7 @@ def partnership_from_feed(data, ms, current_score):
         if isinstance(v, str):
             text = clean(v)
             # Examples: 12, 12(24), Partnership: 12(24)
-            m = re.search(r"(?i)(?:partnership\\s*[:=-]?\\s*)?(\\d+)\\s*(?:\\(\\s*\\d+\\s*\\))?", text)
+            m = re.search(r"(?i)(?:partnership\s*[:=-]?\s*)?(\d+)\s*(?:\(\s*\d+\s*\))?", text)
             return int(m.group(1)) if m else None
         return None
 
@@ -283,7 +283,7 @@ def partnership_from_feed(data, ms, current_score):
     # This remains correct even when the two batter totals don't equal the
     # partnership because of extras.
     try:
-        mcur = re.search(r"^(\\d+)\\s*[-/]\\s*(\\d+)$", str(current_score))
+        mcur = re.search(r"^(\d+)\s*[-/]\s*(\d+)$", str(current_score))
         current_runs = int(mcur.group(1)) if mcur else None
         if current_runs is not None:
             last_wicket_runs = None
@@ -295,7 +295,7 @@ def partnership_from_feed(data, ms, current_score):
                     if "lastwkt" in lk or "lastwicket" in lk:
                         text = clean(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
                         # Match the score immediately following the last-wicket text.
-                        scores = re.findall(r"(\\d+)\\s*[-/]\\s*(\\d+)", text)
+                        scores = re.findall(r"(\d+)\s*[-/]\s*(\d+)", text)
                         if scores:
                             last_wicket_runs = int(scores[-1][0])
             if last_wicket_runs is not None and current_runs >= last_wicket_runs:
@@ -305,7 +305,7 @@ def partnership_from_feed(data, ms, current_score):
 
     # First innings with no wicket: the partnership is the innings total.
     try:
-        mcur = re.search(r"^(\\d+)\\s*[-/]\\s*0$", str(current_score))
+        mcur = re.search(r"^(\d+)\s*[-/]\s*0$", str(current_score))
         if mcur:
             return int(mcur.group(1))
     except Exception:

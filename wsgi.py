@@ -27,7 +27,7 @@ def _norm(value):
 def _team_name(obj):
     if not isinstance(obj, dict):
         return ""
-    for key in ("teamName", "teamFullName", "name", "team", "shortName", "teamShortName"):
+    for key in ("teamName", "teamFullName", "name", "team", "shortName", "teamShortName", "teamSName"):
         if obj.get(key):
             return _clean(obj[key])
     return ""
@@ -39,7 +39,13 @@ def _team_matches(a, b):
         return False
     if a == b or a in b or b in a:
         return True
-    aliases = {"indiaaw": "indwa", "australiaaw": "auswa", "indiaa": "inda", "australiaa": "ausa"}
+    aliases = {
+        "indiaaw": "indwa", "indiaawomen": "indwa", "indwa": "indwa",
+        "australiaaw": "auswa", "australiaawomen": "auswa", "auswa": "auswa",
+        "indiaa": "inda", "inda": "inda", "australiaa": "ausa", "ausa": "ausa",
+        "jammuandkashmir": "jammukashmir", "jammukashmir": "jammukashmir", "jk": "jammukashmir",
+        "restofindia": "restofindia", "roi": "restofindia",
+    }
     if aliases.get(a, a) == aliases.get(b, b):
         return True
     prefixes = (("ind", "india"), ("aus", "australia"), ("eng", "england"), ("pak", "pakistan"), ("ban", "bangladesh"), ("afg", "afghanistan"), ("rsa", "southafrica"))
@@ -203,6 +209,58 @@ def _scorecard_snapshot(match):
         return cached["data"] if cached else None
 
 
+def _scorecard_team_scores(match, team1, team2):
+    """Return the newest published innings score for each selected team.
+    This is a generic safety net for stumps/innings-break responses where
+    miniscore may temporarily omit batTeam.teamScore/teamWkts.
+    """
+    snapshot = _scorecard_snapshot(match)
+    if not snapshot:
+        return {}
+    grouped = {"team1": [], "team2": []}
+    for item in snapshot.get("scores", []) or []:
+        code = item.get("code", "")
+        row = {
+            "runs": item.get("runs"),
+            "wickets": item.get("wickets"),
+            "overs": item.get("overs", ""),
+        }
+        if _team_matches(code, team1):
+            grouped["team1"].append(row)
+        elif _team_matches(code, team2):
+            grouped["team2"].append(row)
+    return {k: v[-1] for k, v in grouped.items() if v}
+
+
+def _header_team_scores(payload, team1, team2):
+    """Read matchHeader.matchScore when the live miniscore is incomplete."""
+    header = payload.get("matchHeader") or {}
+    ms = header.get("matchScore") or payload.get("matchScore") or {}
+    if not isinstance(ms, dict):
+        return {}
+    result = {}
+    for key, team in (("team1Score", team1), ("team2Score", team2)):
+        block = ms.get(key)
+        if not isinstance(block, dict):
+            continue
+        rows = []
+        for k, value in block.items():
+            if not isinstance(value, dict):
+                continue
+            runs = value.get("runs", value.get("score", value.get("teamScore")))
+            wickets = value.get("wickets", value.get("teamWkts", value.get("teamWickets")))
+            overs = value.get("overs", value.get("teamOvers", ""))
+            if runs not in (None, ""):
+                rows.append((str(k), runs, wickets if wickets not in (None, "") else 0, overs))
+        if rows:
+            rows.sort(key=lambda x: int(re.search(r"\d+", x[0]).group()) if re.search(r"\d+", x[0]) else 0)
+            _, runs, wickets, overs = rows[-1]
+            result["team1" if key == "team1Score" else "team2"] = {
+                "runs": runs, "wickets": wickets, "overs": overs
+            }
+    return result
+
+
 def _resolve_batting_index(match, team1, team2, score, wickets, fallback):
     snapshot = _scorecard_snapshot(match)
     if not snapshot:
@@ -274,6 +332,39 @@ def _extract_live(match):
     score = bat_obj.get("teamScore", bat_obj.get("score", mini.get("teamScore")))
     wickets = bat_obj.get("teamWkts", bat_obj.get("wickets", mini.get("teamWkts")))
     overs = mini.get("overs", mini.get("oversStr", ""))
+
+    # Cricbuzz can temporarily publish a valid miniscore without the
+    # teamScore/teamWkts pair during Stumps, Lunch, innings changes, or
+    # while a long-format scorecard is being refreshed. Do not discard the
+    # whole match in that state. Recover the newest innings score from the
+    # scorecard/header and continue using the live miniscore for players,
+    # CRR, status and commentary.
+    if score is None or wickets is None:
+        sc = _scorecard_team_scores(match, team1, team2)
+        if _team_matches(batting_team, team1) and sc.get("team1"):
+            row = sc["team1"]
+        elif _team_matches(batting_team, team2) and sc.get("team2"):
+            row = sc["team2"]
+        else:
+            row = None
+        if row:
+            score = row.get("runs")
+            wickets = row.get("wickets", 0)
+            if overs in (None, ""):
+                overs = row.get("overs", "")
+    if score is None or wickets is None:
+        hs = _header_team_scores(payload, team1, team2)
+        if _team_matches(batting_team, team1) and hs.get("team1"):
+            row = hs["team1"]
+        elif _team_matches(batting_team, team2) and hs.get("team2"):
+            row = hs["team2"]
+        else:
+            row = None
+        if row:
+            score = row.get("runs")
+            wickets = row.get("wickets", 0)
+            if overs in (None, ""):
+                overs = row.get("overs", "")
     if score is None or wickets is None:
         return None
 

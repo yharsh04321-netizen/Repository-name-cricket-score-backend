@@ -334,6 +334,20 @@ def live_detail(mid):
         direct_w = find_number(ms, ("teamWkts","wickets","teamWickets"), 0)
         current_score = score_text(direct, direct_w)
     overs = find_number(ms, ("overs","teamOvers","batOvers"), "")
+    wkts = 0
+    score_match = re.search(r"^(\\d+)\\s*[-/]\\s*(\\d+)$", str(current_score)) if current_score != "-" else None
+    if score_match:
+        wkts = score_match.group(2)
+    else:
+        for source in (bt, btso):
+            if isinstance(source, dict):
+                for wk_key in ("teamWkts","wickets","teamWickets","scoreWickets"):
+                    wv=source.get(wk_key)
+                    if wv not in (None,"") and not isinstance(wv,(dict,list)):
+                        wkts=wv
+                        break
+                if wkts not in (None,"",0,"0"):
+                    break
 
     # Partnership is also part of the live miniscore on some Cricbuzz
     # responses, but its exact key/nesting can vary. Search the live

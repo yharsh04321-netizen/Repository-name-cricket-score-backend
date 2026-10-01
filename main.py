@@ -19,19 +19,19 @@ SCORECARD_URL = "https://www.cricbuzz.com/api/mcenter/v1/{mid}/scard"
 scorecard_cache = {}
 
 def fetch_scorecard(mid):
+    """Deprecated API fallback.
+    Cricbuzz's old /api/mcenter/v1/{id}/scard endpoint returns 404 for many
+    current matches. Live score processing must never depend on it.
+    """
+    key = str(mid)
     now = time.time()
-    c = scorecard_cache.get(str(mid))
-    if c and now - c["time"] < 10:
+    c = scorecard_cache.get(key)
+    if c and now - c["time"] < 30:
         return c["data"]
-    try:
-        r = requests.get(SCORECARD_URL.format(mid=mid), headers=HEADERS, timeout=12)
-        r.raise_for_status()
-        data = r.json()
-        scorecard_cache[str(mid)] = {"time": now, "data": data}
-        return data
-    except Exception as exc:
-        print("SCORECARD FETCH ERROR:", repr(exc))
-        return None
+    # Keep this function for backward compatibility with older helper calls,
+    # but deliberately do not hit the broken endpoint.
+    scorecard_cache[key] = {"time": now, "data": None}
+    return None
 
 def scorecard_innings(data):
     raw=data
@@ -485,20 +485,8 @@ def live_detail(mid):
         bat=header_bat
         if same_team(bat,t1) and hs.get("team1",{}).get("overs"): overs=hs["team1"]["overs"]
         elif same_team(bat,t2) and hs.get("team2",{}).get("overs"): overs=hs["team2"]["overs"]
-    try:
-        sc=scorecard_innings(fetch_scorecard(mid))
-        for row in sc:
-            if same_team(row["team"],t1): state["team1"]=row["score"]
-            elif same_team(row["team"],t2): state["team2"]=row["score"]
-        if sc and not header_bat:
-            latest=sc[-1]
-            # Scorecard is used for totals only. Never use its last innings
-            # to decide the live batting side because it can lag during breaks.
-            if not header_bat and latest.get("overs") and not overs:
-                overs=latest["overs"]
-    except Exception as exc:
-        print("SCORECARD PARSE ERROR:",repr(exc))
-
+    # Do not call the deprecated scorecard API here. miniscore + matchHeader
+    # are the live sources of truth, and last_scores preserves known totals.
     state = last_scores.setdefault(mid, {"team1":"-","team2":"-","bat":""})
     for k, v in historical_scores(data, t1, t2).items():
         if v and v != "-":
@@ -532,16 +520,8 @@ def live_detail(mid):
     if feed_partnership is not None:
         partnership = str(feed_partnership)
 
-    if current_score == "-":
-        try:
-            live_rows = scorecard_innings(fetch_scorecard(mid))
-            matching = [r for r in live_rows if same_team(r.get("team"), bat)]
-            if matching:
-                current_score = matching[-1].get("score", "-")
-                if matching[-1].get("overs") not in (None, ""):
-                    overs = matching[-1]["overs"]
-        except Exception as exc:
-            print("LIVE SCORE FALLBACK ERROR:", repr(exc))
+    # No scorecard API fallback: if miniscore omits the total, use partnership
+    # or the CRR/overs arithmetic fallback below without making a failing HTTP call.
 
     # If the live feed omits teamScore but provides the current partnership,
     # and no wicket has fallen, that partnership is the innings total.

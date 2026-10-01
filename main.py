@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, Response, request
-import requests, time, re
+import requests, time, re, json
 from urllib.parse import quote
 from pathlib import Path
 
@@ -235,6 +235,81 @@ def find_number(ms, keys, default="-"):
             return v
     return default
 
+def partnership_from_feed(data, ms, current_score):
+    """Extract the live current-pair partnership without using stale innings data."""
+    def parse_value(v):
+        if isinstance(v, dict):
+            for k in ("runs", "partnershipRuns", "score", "value", "total"):
+                if k in v:
+                    got = parse_value(v.get(k))
+                    if got is not None:
+                        return got
+            return None
+        if isinstance(v, (int, float)):
+            return int(v)
+        if isinstance(v, str):
+            text = clean(v)
+            # Examples: 12, 12(24), Partnership: 12(24)
+            m = re.search(r"(?i)(?:partnership\\s*[:=-]?\\s*)?(\\d+)\\s*(?:\\(\\s*\\d+\\s*\\))?", text)
+            return int(m.group(1)) if m else None
+        return None
+
+    # Prefer live miniscore fields. Do not let historical scorecard values win.
+    for node in (ms, ms.get("batTeam") if isinstance(ms, dict) else None,
+                 ms.get("batTeamScoreObj") if isinstance(ms, dict) else None):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if "partnership" in str(k).lower():
+                    got = parse_value(v)
+                    if got is not None:
+                        return got
+
+    # Cricbuzz can expose partnership/last-wicket information elsewhere in
+    # the live response. Search only current-response objects, preferring
+    # explicit partnership keys.
+    for node in walk(data):
+        if not isinstance(node, dict):
+            continue
+        for k, v in node.items():
+            lk = str(k).lower().replace("_", "")
+            if "partnership" in lk:
+                got = parse_value(v)
+                if got is not None:
+                    return got
+
+    # Exact fallback: current score minus the score at the last wicket.
+    # This remains correct even when the two batter totals don't equal the
+    # partnership because of extras.
+    try:
+        mcur = re.search(r"^(\\d+)\\s*[-/]\\s*(\\d+)$", str(current_score))
+        current_runs = int(mcur.group(1)) if mcur else None
+        if current_runs is not None:
+            last_wicket_runs = None
+            for node in walk(data):
+                if not isinstance(node, dict):
+                    continue
+                for k, v in node.items():
+                    lk = str(k).lower().replace("_", "")
+                    if "lastwkt" in lk or "lastwicket" in lk:
+                        text = clean(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+                        # Match the score immediately following the last-wicket text.
+                        scores = re.findall(r"(\\d+)\\s*[-/]\\s*(\\d+)", text)
+                        if scores:
+                            last_wicket_runs = int(scores[-1][0])
+            if last_wicket_runs is not None and current_runs >= last_wicket_runs:
+                return current_runs - last_wicket_runs
+    except Exception:
+        pass
+
+    # First innings with no wicket: the partnership is the innings total.
+    try:
+        mcur = re.search(r"^(\\d+)\\s*[-/]\\s*0$", str(current_score))
+        if mcur:
+            return int(mcur.group(1))
+    except Exception:
+        pass
+    return None
+
 def extract_captains(data,t1,t2,mid):
     result={"team1":None,"team2":None}
     def put(team,name,image=""):
@@ -449,6 +524,11 @@ def live_detail(mid):
     bow = ms.get("bowlerStriker") or ms.get("bowler") or ms.get("currentBowler") or {}
     partnership = live_partnership(ms)
     partnership = partnership if partnership not in (None, "") else "-"
+    # Replace the miniscore-only guess with a feed-wide live partnership
+    # extractor. It prefers explicit partnership data, then last-wicket math.
+    feed_partnership = partnership_from_feed(data, ms, current_score)
+    if feed_partnership is not None:
+        partnership = str(feed_partnership)
 
     if current_score == "-":
         try:
@@ -490,21 +570,15 @@ def live_detail(mid):
         except Exception:
             pass
 
-    # Cricbuzz normally supplies partnership directly. If that field is
-    # absent, the current pair's combined runs are the safest live fallback
-    # for this overlay (and are preferable to displaying a blank dash).
+    # Only use batter totals as a last-resort display fallback. The feed
+    # extractor above is preferred because extras mean batter runs can differ
+    # from partnership runs.
     if partnership == "-":
         try:
             r1 = float(str((striker or {}).get("runs", 0)).replace(",", ""))
             r2 = float(str((non or {}).get("runs", 0)).replace(",", ""))
             if (striker or {}).get("name") and (non or {}).get("name"):
                 partnership = str(int(round(r1 + r2)))
-        except Exception:
-            pass
-    if partnership == "-" and current_score != "-":
-        # Final fallback when the feed has no pair details at all.
-        try:
-            partnership = str(current_score).split("-", 1)[0]
         except Exception:
             pass
 

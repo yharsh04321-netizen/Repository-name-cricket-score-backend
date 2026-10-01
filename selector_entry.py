@@ -125,7 +125,7 @@ def _fallback_live(match):
     cannot resolve a scorecard snapshot or captain metadata.
     """
     mid = str(match["id"])
-    url = main.scorecard_url(match.get("url", "")) if match.get("url") else f"https://www.cricbuzz.com/live-cricket-scores/{mid}"
+    url = str(match.get("url") or f"https://www.cricbuzz.com/live-cricket-scores/{mid}")
     match = dict(match)
     match["url"] = url
     live_url = f"https://www.cricbuzz.com/api/mcenter/comm/{mid}?obs_ts={time.time_ns()}"
@@ -217,7 +217,7 @@ def _fallback_live(match):
     return {
         "title": f"{t1} vs {t2}", "url": url,
         "team1": t1, "team2": t2,
-        "team1_code": main.team_code(t1), "team2_code": main.team_code(t2),
+        "team1_code": main.code(t1), "team2_code": main.code(t2),
         "team1_flag": flag(t1), "team2_flag": flag(t2),
         "team1_score": f"{runs}-{wkts}" if bi == 0 else "-",
         "team2_score": f"{runs}-{wkts}" if bi == 1 else "-",
@@ -238,7 +238,13 @@ def _public_page_score_fallback(match):
         snap = entry.wsgi._scorecard_snapshot(match)
         if not isinstance(snap, dict):
             return None
-        t1, t2 = main.extract_teams(str(match.get("name") or ""))
+        name_text = str(match.get("name") or "")
+        try:
+            t1, t2 = main.extract_teams(name_text)
+        except Exception:
+            parts = re.split(r"\\s+(?:vs|v|versus)\\s+", name_text, maxsplit=1, flags=re.I)
+            t1 = parts[0].strip() if parts else ""
+            t2 = parts[1].strip() if len(parts) > 1 else ""
         if not t1 or not t2:
             return None
         scores = snap.get("scores") or {}
@@ -262,8 +268,8 @@ def _public_page_score_fallback(match):
         result = {
             "title": f"{t1} vs {t2}", "url": match.get("url", ""),
             "team1": t1, "team2": t2,
-            "team1_code": main.team_code(t1), "team2_code": main.team_code(t2),
-            "team1_flag": main.team_flag(t1), "team2_flag": main.team_flag(t2),
+            "team1_code": main.code(t1), "team2_code": main.code(t2),
+            "team1_flag": main.flag(t1), "team2_flag": main.flag(t2),
             "team1_score": f"{s1.get('runs')}-{s1.get('wickets', 0)}" if s1 else "-",
             "team2_score": f"{s2.get('runs')}-{s2.get('wickets', 0)}" if s2 else "-",
             "team1_overs": str(s1.get("overs", "")) if s1 else "",
@@ -411,7 +417,7 @@ def _fallback_live(match):
     cannot resolve a scorecard snapshot or captain metadata.
     """
     mid = str(match["id"])
-    url = main.scorecard_url(match.get("url", "")) if match.get("url") else f"https://www.cricbuzz.com/live-cricket-scores/{mid}"
+    url = str(match.get("url") or f"https://www.cricbuzz.com/live-cricket-scores/{mid}")
     match = dict(match)
     match["url"] = url
     live_url = f"https://www.cricbuzz.com/api/mcenter/comm/{mid}?obs_ts={time.time_ns()}"
@@ -503,7 +509,7 @@ def _fallback_live(match):
     return {
         "title": f"{t1} vs {t2}", "url": url,
         "team1": t1, "team2": t2,
-        "team1_code": main.team_code(t1), "team2_code": main.team_code(t2),
+        "team1_code": main.code(t1), "team2_code": main.code(t2),
         "team1_flag": flag(t1), "team2_flag": flag(t2),
         "team1_score": f"{runs}-{wkts}" if bi == 0 else "-",
         "team2_score": f"{runs}-{wkts}" if bi == 1 else "-",

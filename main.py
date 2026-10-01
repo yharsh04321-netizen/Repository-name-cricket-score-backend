@@ -490,16 +490,23 @@ def live_detail(mid):
         except Exception:
             pass
 
-    # If Cricbuzz omits partnership, use the current pair's combined runs
-    # only when no wicket has fallen. Otherwise do not invent a value.
-    if partnership == "-" and wkts in (None, "", 0, "0"):
+    # Cricbuzz normally supplies partnership directly. If that field is
+    # absent, the current pair's combined runs are the safest live fallback
+    # for this overlay (and are preferable to displaying a blank dash).
+    if partnership == "-":
         try:
             r1 = float(str((striker or {}).get("runs", 0)).replace(",", ""))
             r2 = float(str((non or {}).get("runs", 0)).replace(",", ""))
-            partnership = str(int(round(r1 + r2)))
+            if (striker or {}).get("name") and (non or {}).get("name"):
+                partnership = str(int(round(r1 + r2)))
         except Exception:
-            if current_score != "-":
-                partnership = str(current_score).split("-", 1)[0]
+            pass
+    if partnership == "-" and current_score != "-":
+        # Final fallback when the feed has no pair details at all.
+        try:
+            partnership = str(current_score).split("-", 1)[0]
+        except Exception:
+            pass
 
     # Apply the recovered live score only to the current batting team.
     if bat and current_score != "-":

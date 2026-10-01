@@ -295,6 +295,10 @@ def _header_current_batting_team(payload, team1, team2):
 
 
 
+def _missing_live_value(value):
+    return value is None or str(value).strip().lower() in {"", "-", "—", "na", "n/a", "null"}
+
+
 def _payload_status_text(payload):
     """Collect the compact status/result strings published by the live feed."""
     if not isinstance(payload, dict):
@@ -321,12 +325,12 @@ def _status_batting_team(payload, team1, team2):
     if not text:
         return ""
 
-    # Chase / target language is explicit: "India A need 337 runs".
-    m = re.search(r"(?i)(.+?)\s+(?:need|requires?)\s+\d+\s*(?:runs?)?", text)
-    if m:
-        candidate = _clean(m.group(1))
+    # Chase / target language is explicit. Status strings often have a
+    # prefix such as "Day 3 - Stump -", so match the team name anywhere in
+    # the phrase instead of requiring the capture to equal the team exactly.
+    if re.search(r"(?i)\bneed(?:s)?\b|\brequire(?:s)?\b", text):
         for team in (team1, team2):
-            if _team_matches(candidate, team) or _team_matches(team, candidate):
+            if _norm(team) and _norm(team) in _norm(text):
                 return team
 
     # "X trail/lead by ..." normally identifies the team currently batting.
@@ -337,23 +341,17 @@ def _status_batting_team(payload, team1, team2):
             if _team_matches(candidate, team) or _team_matches(team, candidate):
                 return team
 
-    # In a completed limited-overs result, the team that lost by runs was the
-    # final batting side. Example: "India won by 124 runs" -> Sri Lanka batted.
-    m = re.search(r"(?i)(.+?)\s+won\s+by\s+\d+\s+runs?", text)
-    if m:
-        winner = _clean(m.group(1))
-        if _team_matches(winner, team1):
-            return team2
-        if _team_matches(winner, team2):
-            return team1
+    # In a completed limited-overs result, the team that lost by runs was
+    # the final batting side.
+    if re.search(r"(?i)\bwon\s+by\s+\d+\s+runs?", text):
+        for winner, loser in ((team1, team2), (team2, team1)):
+            if _norm(winner) and _norm(winner) in _norm(text):
+                return loser
 
-    # "won by N wickets" means the winner chased successfully, so the winner
-    # is the final/current batting side.
-    m = re.search(r"(?i)(.+?)\s+won\s+by\s+\d+\s+wickets?", text)
-    if m:
-        winner = _clean(m.group(1))
+    # "won by N wickets" means the winner chased successfully.
+    if re.search(r"(?i)\bwon\s+by\s+\d+\s+wickets?", text):
         for team in (team1, team2):
-            if _team_matches(winner, team):
+            if _norm(team) and _norm(team) in _norm(text):
                 return team
     return ""
 
@@ -397,12 +395,15 @@ def _team_score_mentions(payload, team1, team2):
 def _result_score_fallback(payload, team1, team2, known_scores):
     """Recover the losing score from a completed 'won by N runs' result."""
     text = _payload_status_text(payload)
-    m = re.search(r"(?i)(.+?)\s+won\s+by\s+(\d+)\s+runs?", text)
+    m = re.search(r"(?i)won\s+by\s+(\d+)\s+runs?", text)
     if not m:
         return {}
-    winner = _clean(m.group(1))
-    margin = int(m.group(2))
-    winner_key = "team1" if _team_matches(winner, team1) else ("team2" if _team_matches(winner, team2) else "")
+    margin = int(m.group(1))
+    winner_key = ""
+    for key, team in (("team1", team1), ("team2", team2)):
+        if _norm(team) and _norm(team) in _norm(text):
+            winner_key = key
+            break
     if not winner_key or not known_scores.get(winner_key):
         return {}
     try:
@@ -507,7 +508,7 @@ def _extract_live(match):
     # whole match in that state. Recover the newest innings score from the
     # scorecard/header and continue using the live miniscore for players,
     # CRR, status and commentary.
-    if score is None or wickets is None:
+    if _missing_live_value(score) or _missing_live_value(wickets):
         sc = _scorecard_team_scores(match, team1, team2)
         if _team_matches(batting_team, team1) and sc.get("team1"):
             row = sc["team1"]
@@ -524,7 +525,7 @@ def _extract_live(match):
     # completed innings. If it is absent, use score-bearing objects already
     # present in the commentary response before giving up.
     hs = _header_team_scores(payload, team1, team2)
-    if score is None or wickets is None:
+    if _missing_live_value(score) or _missing_live_value(wickets):
         if _team_matches(batting_team, team1) and hs.get("team1"):
             row = hs["team1"]
         elif _team_matches(batting_team, team2) and hs.get("team2"):
@@ -546,7 +547,7 @@ def _extract_live(match):
     for key, row in mentioned.items():
         historical[key] = f'{row["runs"]}-{row["wickets"]}'
 
-    if score is None or wickets is None:
+    if _missing_live_value(score) or _missing_live_value(wickets):
         if _team_matches(batting_team, team1) and historical.get("team1"):
             score = historical["team1"].split("-")[0]
             wickets = historical["team1"].split("-")[1] if "-" in historical["team1"] else 0
@@ -563,7 +564,7 @@ def _extract_live(match):
     if result_rows:
         for key, row in result_rows.items():
             historical[key] = f'{row["runs"]}-{row["wickets"]}'
-        if score is None or wickets is None:
+        if _missing_live_value(score) or _missing_live_value(wickets):
             key = "team1" if _team_matches(batting_team, team1) else "team2"
             if key in result_rows:
                 score = result_rows[key]["runs"]
@@ -572,11 +573,11 @@ def _extract_live(match):
     # If the feed gives CRR and overs but omits the total, recover the current
     # runs mathematically. This is exact for the 13-over India A snapshot and
     # robust for other breaks where the feed drops only the total.
-    if score is None or wickets is None:
+    if _missing_live_value(score) or _missing_live_value(wickets):
         try:
             rr = float(str(crr if "crr" in locals() else mini.get("currentRunRate", mini.get("crr", ""))).replace(",", ""))
             ov_text = str(overs or "")
-            om = re.match(r"^s*(d+)(?:.(d+))?s*$", ov_text)
+            om = re.match(r"^\s*(\d+)(?:\.(\d+))?\s*$", ov_text)
             if om and rr >= 0:
                 whole = int(om.group(1))
                 balls = int((om.group(2) or "0")[:1])
@@ -589,7 +590,7 @@ def _extract_live(match):
         except Exception:
             pass
 
-    if score is None or wickets is None:
+    if _missing_live_value(score) or _missing_live_value(wickets):
         return None
 
     if _team_matches(batting_team, team1):

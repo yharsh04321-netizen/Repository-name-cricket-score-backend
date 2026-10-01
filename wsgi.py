@@ -282,8 +282,17 @@ def _scorecard_team_scores(match, team1, team2):
     snapshot = _scorecard_snapshot(match)
     if not snapshot:
         return {}
+    scores = snapshot.get("scores", {}) or {}
+    # _parse_public_score_text returns a direct team1/team2 mapping.
+    if isinstance(scores, dict) and ("team1" in scores or "team2" in scores):
+        return {
+            k: scores[k] for k in ("team1", "team2")
+            if isinstance(scores.get(k), dict)
+        }
+
+    # Backward-compatible support for older list-shaped score snapshots.
     grouped = {"team1": [], "team2": []}
-    for item in snapshot.get("scores", []) or []:
+    for item in scores if isinstance(scores, list) else []:
         code = item.get("code", "")
         row = {
             "runs": item.get("runs"),

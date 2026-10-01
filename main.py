@@ -15,6 +15,61 @@ CODES = {"INDIA":"IND","WEST INDIES":"WI","AUSTRALIA":"AUS","SOUTH AFRICA":"RSA"
 
 # Safety fallback for the currently selected match only. Normal live data is always preferred.
 KNOWN_CURRENT = {"151543": {"west indies": "405-7"}}
+SCORECARD_URL = "https://www.cricbuzz.com/api/mcenter/v1/{mid}/scard"
+scorecard_cache = {}
+
+def fetch_scorecard(mid):
+    now = time.time()
+    c = scorecard_cache.get(str(mid))
+    if c and now - c["time"] < 10:
+        return c["data"]
+    try:
+        r = requests.get(SCORECARD_URL.format(mid=mid), headers=HEADERS, timeout=12)
+        r.raise_for_status()
+        data = r.json()
+        scorecard_cache[str(mid)] = {"time": now, "data": data}
+        return data
+    except Exception as exc:
+        print("SCORECARD FETCH ERROR:", repr(exc))
+        return None
+
+def scorecard_innings(data):
+    raw = data
+    if isinstance(raw, dict):
+        raw = raw.get("scoreCard") or raw.get("scorecard") or raw.get("scoreCardList") or list(raw.values())
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raw = [raw]
+    out=[]
+    for item in raw:
+        if not isinstance(item, dict): continue
+        bd=item.get("batTeamDetails") or item.get("batTeam") or {}
+        team=obj_name(bd) or obj_name(item.get("batTeamName"))
+        if not team: continue
+        sd=item.get("scoreDetails") or item.get("scoreDetail") or {}
+        if not isinstance(sd,dict): sd={}
+        runs=wickets=overs=None
+        for src in (sd,item,bd):
+            if not isinstance(src,dict): continue
+            if runs is None:
+                for k in ("runs","score","teamScore","teamRuns","totalRuns"):
+                    v=src.get(k)
+                    if v not in (None,"") and not isinstance(v,(dict,list)):
+                        try: float(str(v).replace(",","")); runs=v; break
+                        except Exception: pass
+            if wickets is None:
+                for k in ("wickets","teamWkts","wicketsLost","teamWickets"):
+                    v=src.get(k)
+                    if v not in (None,"") and not isinstance(v,(dict,list)): wickets=v; break
+            if overs is None:
+                for k in ("overs","teamOvers","oversPlayed"):
+                    v=src.get(k)
+                    if v not in (None,"") and not isinstance(v,(dict,list)): overs=v; break
+        if runs is not None:
+            out.append({"team":clean(team),"score":score_text(runs,wickets),"overs":clean(overs),"innings":item.get("inningsId") or item.get("inningsID") or item.get("innings")})
+    return out
+
 
 def clean(v):
     return " ".join(str(v or "").split()).strip()
@@ -209,6 +264,26 @@ def live_detail(mid):
         wkts = find_number(ms, ("teamWkts","wickets","teamWickets"), 0)
     current_score = score_text(runs, wkts)
     overs = find_number(ms, ("overs","teamOvers","batOvers"), "")
+
+    # Use the scorecard endpoint for authoritative innings totals when miniscore
+    # temporarily omits them (common around session/innings transitions).
+    try:
+        sc = scorecard_innings(fetch_scorecard(mid))
+        if sc:
+            for row in sc:
+                if same_team(row["team"], t1):
+                    last_scores.setdefault(mid, {"team1":"-","team2":"-","bat":""})["team1"] = row["score"]
+                elif same_team(row["team"], t2):
+                    last_scores.setdefault(mid, {"team1":"-","team2":"-","bat":""})["team2"] = row["score"]
+            latest = sc[-1]
+            if same_team(latest["team"], t1):
+                bat = t1; batting_index = 0
+            elif same_team(latest["team"], t2):
+                bat = t2; batting_index = 1
+            if latest.get("overs"):
+                overs = latest["overs"]
+    except Exception as exc:
+        print("SCORECARD PARSE ERROR:", repr(exc))
 
     state = last_scores.setdefault(mid, {"team1":"-","team2":"-","bat":""})
     for k, v in historical_scores(data, t1, t2).items():

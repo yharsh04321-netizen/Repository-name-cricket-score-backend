@@ -108,6 +108,17 @@ def _raw_score_fix(match, data):
         data["bowling_index"] = 1 - idx
         return data
 
+    # If the rich parser resolved a different batting side from the raw
+    # miniscore, the raw miniscore can be a previous-innings snapshot during
+    # result/innings-break states. In that case never overwrite the richer
+    # result with stale runs/wickets.
+    resolved_bat = str(data.get("batting_team") or "").strip()
+    if resolved_bat and bat_name and not wsgi._team_matches(resolved_bat, bat_name):
+        data["team1"] = t1 or data.get("team1", "TEAM 1")
+        data["team2"] = t2 or data.get("team2", "TEAM 2")
+        data["bowling_index"] = 1 - idx
+        return data
+
     score = f"{runs}-{wickets}"
 
     key = str(wsgi._match_id(match))

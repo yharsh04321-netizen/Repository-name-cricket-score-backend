@@ -186,12 +186,30 @@ def _scorecard_final(match, data):
     return data
 
 
+def _selected_match_from_id(mid):
+    """Build a stable match object from the selected ID.
+
+    Once the user selects a match, the ID in the scoreboard URL is the
+    authoritative selection. Do not re-scrape the selector list on every
+    3-second scoreboard poll: a transient Cricbuzz selector failure or a
+    match moving between LIVE/TODAY/RECENT must never disconnect the board.
+    """
+    mid=str(mid or "").strip()
+    return {
+        "id": mid,
+        "name": f"Match {mid}",
+        "url": f"https://www.cricbuzz.com/live-cricket-scores/{mid}",
+    }
+
+
 def selected_score():
     mid=str(request.args.get("match_id","")).strip()
-    if not mid.isdigit():return selector_entry._fixed_selected_score()
-    try:match=next((m for m in selector_entry.get_matches() if str(m.get("id"))==mid),None)
-    except Exception:match=None
-    match=match or {"id":mid,"name":f"Match {mid}","url":f"https://www.cricbuzz.com/live-cricket-scores/{mid}"}
+    if not mid.isdigit():
+        return selector_entry._fixed_selected_score()
+
+    # The scoreboard URL carries the persistent selection. The live feed,
+    # not the selector page, decides the current teams/score/status.
+    match=_selected_match_from_id(mid)
     try:
         # Scorecard-aware production parser first. This prevents a completed
         # match from staying frozen at its last live over.
@@ -205,16 +223,18 @@ def selected_score():
                 data["captains"]=main.extract_captains(payload or {},data.get("team1",""),data.get("team2",""),mid)
             except Exception: pass
         data["url"]=match.get("url","")
+        data["match_id"]=mid
         data["current_over"]=dict(data.get("current_over") or EMPTY)
     except Exception as exc:
         print("live parser/current-over error:",repr(exc))
         try:data=main.live_detail(mid)
         except Exception:data=None
     if data is None:
-        data={"title":match.get("name","CRICKET LIVE"),"url":match.get("url",""),"team1":"LIVE DATA","team2":"RETRYING","team1_score":"-","team2_score":"-","team1_overs":"","team2_overs":"","crr":"-","partnership":"-","status":"LIVE DATA RETRYING","batsmen":[],"bowler":None,"captains":[],"batting_index":0,"bowling_index":1,"current_over":dict(EMPTY)}
+        data={"title":match.get("name","CRICKET LIVE"),"url":match.get("url",""),"match_id":mid,"team1":"LIVE DATA","team2":"RETRYING","team1_score":"-","team2_score":"-","team1_overs":"","team2_overs":"","crr":"-","partnership":"-","status":"LIVE DATA RETRYING","batsmen":[],"bowler":None,"captains":[],"batting_index":0,"bowling_index":1,"current_over":dict(EMPTY)}
+    data.setdefault("match_id",mid)
     data.setdefault("current_over",dict(EMPTY));data.setdefault("batsmen",[]);data.setdefault("captains",[]);data.setdefault("crr","-");data.setdefault("partnership","-");data.setdefault("status","LIVE")
     data.setdefault("team1_score","-");data.setdefault("team2_score","-");data.setdefault("team1_overs","");data.setdefault("team2_overs","");data.setdefault("batting_index",0);data.setdefault("bowling_index",1-int(data.get("batting_index",0) or 0))
-    resp=selector_entry.jsonify({"match":data,"error":None});resp.headers["Cache-Control"]="no-store, no-cache, max-age=0";return resp
+    resp=selector_entry.jsonify({"match":data,"error":None});resp.headers["Cache-Control"]="no-store, no-cache, max-age=0";resp.headers["Pragma"]="no-cache";resp.headers["Expires"]="0";resp.headers["Vary"]="*";return resp
 
 
 def scoreboard():

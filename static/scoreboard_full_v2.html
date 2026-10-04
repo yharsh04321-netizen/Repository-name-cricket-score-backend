@@ -38,18 +38,18 @@ function balls(co){const a=Array.isArray(co&&co.balls)?co.balls:[];if(!a.length)
 function render(m){
  const bi=Number(m.batting_index||0)===1?1:0;
  const t1=m.team1||'TEAM 1',t2=m.team2||'TEAM 2';
- const leftFlag=m.team1_flag||flag(t1), rightFlag=m.team2_flag||flag(t2);
+ const f1=m.team1_flag||flag(t1), f2=m.team2_flag||flag(t2);
  const bat=bi?t2:t1, bowl=bi?t1:t2;
- const bflag=bi?rightFlag:leftFlag, oflag=bi?leftFlag:rightFlag;
- const leftScore=m.team1_score||'-', leftOvers=m.team1_overs||'';
- const rightScore=m.team2_score||'-', rightOvers=m.team2_overs||'';
+ const bflag=bi?f2:f1, oflag=bi?f1:f2;
+ // IMPORTANT: batting team is always on the LEFT; bowling team is always on the RIGHT.
+ const leftTeam=bat, leftFlag=bflag, leftScore=bi?m.team2_score:m.team1_score, leftOvers=bi?m.team2_overs:m.team1_overs;
+ const rightTeam=bowl, rightFlag=oflag, rightScore=bi?m.team1_score:m.team2_score, rightOvers=bi?m.team1_overs:m.team2_overs;
  const caps=m.captains||[], bats=m.batsmen||[], b1=bats[0]||{},b2=bats[1]||{},bo=m.bowler||null;
  const crr=m.crr||'-',part=m.partnership||'-';
- const leftState=bi===0?'BATTING':'BOWLING', rightState=bi===1?'BATTING':'BOWLING';
  document.getElementById('board').innerHTML='<div class="hero">'+
- '<div class="side"><div class="flag">'+esc(leftFlag)+'</div><div><div class="team">'+esc(t1)+'</div><div class="scoreline"><span class="scoreflag">'+esc(leftFlag)+'</span><div class="score">'+esc(leftScore)+'</div></div><div class="overs">'+esc(leftOvers?leftOvers+' OVERS':'')+'</div><div class="bowling">'+esc(leftState)+'</div></div></div>'+
+ '<div class="side"><div class="flag">'+esc(leftFlag)+'</div><div><div class="team">'+esc(leftTeam)+'</div><div class="scoreline"><span class="scoreflag">'+esc(leftFlag)+'</span><div class="score">'+esc(leftScore||'-')+'</div></div><div class="overs">'+esc(leftOvers?leftOvers+' OVERS':'')+'</div><div class="bowling">BATTING</div></div></div>'+
  '<div class="middle"><div class="battle">CAPTAINS BATTLE</div><div class="vs">VS</div><div class="caps">'+captain(bi?caps[1]:caps[0],0,bat,bi?m.team2_code:m.team1_code)+'<div class="badge">VS</div>'+captain(bi?caps[0]:caps[1],1,bowl,bi?m.team1_code:m.team2_code)+'</div><div class="status">'+esc(m.status||'LIVE')+'</div></div>'+
- '<div class="side right"><div><div class="team">'+esc(t2)+'</div><div class="scoreline"><span class="scoreflag">'+esc(rightFlag)+'</span><div class="score">'+esc(rightScore)+'</div></div><div class="overs">'+esc(rightOvers?rightOvers+' OVERS':'')+'</div><div class="bowling">'+esc(rightState)+'</div></div><div class="flag">'+esc(rightFlag)+'</div></div>'+
+ '<div class="side right"><div><div class="team">'+esc(rightTeam)+'</div><div class="scoreline"><span class="scoreflag">'+esc(rightFlag)+'</span><div class="score">'+esc(rightScore||'-')+'</div></div><div class="overs">'+esc(rightOvers?rightOvers+' OVERS':'')+'</div><div class="bowling">BOWLING</div></div><div class="flag">'+esc(rightFlag)+'</div></div>'+
  '</div><div class="info"><div>CRR: <b>'+esc(crr)+'</b></div><div>P\'SHIP: <b>'+esc(part)+'</b></div><div>'+esc(bat.toUpperCase())+' BATTING</div></div>'+
  '<div class="over"><div class="overbox"><div class="overhead">CURRENT OVER'+(m.current_over&&m.current_over.over?' • '+esc(m.current_over.over):'')+(m.current_over&&m.current_over.free_hit?' • FREE HIT':'')+'</div><div class="balls">'+balls(m.current_over||{})+'</div></div></div>'+
  '<div class="cards"><div class="card bat"><div class="title">BATTER 1 <span class="teamflag">'+esc(bflag)+'</span></div><div class="playerline"><span class="playerflag">'+esc(bflag)+'</span><div class="player">'+esc(b1.name||'-')+'</div></div><div class="stats">'+esc(b1.runs==null?'-':b1.runs)+' ('+esc(b1.balls==null?'-':b1.balls)+')</div><div class="sub">LIVE BATTER • FACING BOWLER</div><div class="strike '+(b1.striker?'':'off')+'">'+(b1.striker?'🏏 ON STRIKE':'🏏 NOT ON STRIKE')+'</div></div>'+

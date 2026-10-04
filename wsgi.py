@@ -189,6 +189,43 @@ def _live_data(match):
         return cached["data"] if cached else None
 
 
+def _parse_compact_score_text(text, team1="", team2=""):
+    """Parse Cricbuzz's compact top-of-page score line.
+    Example: IND 351/7(50) WI 352/5(48.2).
+    This is intentionally strict so one team's name cannot accidentally
+    capture the other team's score from nearby prose.
+    """
+    found = {}
+    text = _clean(text)
+    if not text:
+        return found
+    for key, team in (("team1", team1), ("team2", team2)):
+        aliases = [main.team_code(team)]
+        norm = _norm(team)
+        if norm == "westindies":
+            aliases += ["WI"]
+        if norm == "india":
+            aliases += ["IND"]
+        # Also allow a short code exposed by the team object.
+        aliases = [a for a in dict.fromkeys(aliases) if _clean(a)]
+        for alias in aliases:
+            a = re.escape(_clean(alias))
+            rx = re.compile(
+                r"(?i)(?<![A-Za-z0-9])" + a +
+                r"\\s*(\\d+)\\s*[-/]\\s*(\\d+)"
+                r"(?:\\s*\\((\\d+(?:\\.\\d+)?)\\s*(?:ov|overs?)\\))?"
+            )
+            m = rx.search(text)
+            if m:
+                found[key] = {
+                    "runs": int(m.group(1)),
+                    "wickets": int(m.group(2)),
+                    "overs": m.group(3) or "",
+                }
+                break
+    return found
+
+
 def _parse_public_score_text(text, team1="", team2=""):
     """Parse team-labelled scores from the public Cricbuzz match page.
     This intentionally does not depend on the deprecated /scard API or on a
@@ -261,7 +298,13 @@ def _scorecard_snapshot(match):
                 page_t1, page_t2 = main.extract_teams(match.get("name", ""))
             except Exception:
                 page_t1, page_t2 = "", ""
-        data = {"text": text, "scores": _parse_public_score_text(text, page_t1, page_t2)}
+        compact = _parse_compact_score_text(text, page_t1, page_t2)
+        generic = _parse_public_score_text(text, page_t1, page_t2)
+        # Compact top score-line is strict and team-local; use it first.
+        # Generic page-text parsing remains a fallback for unusual layouts.
+        scores = dict(generic)
+        scores.update(compact)
+        data = {"text": text, "scores": scores}
         SCORECARD_CACHE[mid] = {"time": now, "data": data}
         return data
     except Exception as exc:

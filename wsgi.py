@@ -680,8 +680,12 @@ def _extract_live(match):
     # matches/innings breaks where both miniscore and matchHeader omit totals.
     try:
         ps = _scorecard_team_scores(match, team1, team2)
+        # The public scorecard is newer/more authoritative for published
+        # innings totals than matchHeader.matchScore, which can remain stale
+        # (e.g. show 2-1 after the second innings has started/finished).
+        # Prefer any explicit team-labelled score from the public page.
         for key, row in ps.items():
-            if key not in hs:
+            if isinstance(row, dict) and row.get("runs") not in (None, ""):
                 hs[key] = row
     except Exception:
         pass

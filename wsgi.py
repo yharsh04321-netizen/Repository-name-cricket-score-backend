@@ -10,7 +10,7 @@ LIVE_URL = "https://www.cricbuzz.com/api/mcenter/comm/{}"
 LIVE_CACHE = {}
 CAPTAIN_CACHE = {}
 SCORECARD_CACHE = {}
-CACHE_SECONDS = 4
+CACHE_SECONDS = 2
 SCORECARD_CACHE_SECONDS = 8
 HEADERS = dict(main.HEADERS)
 HEADERS["User-Agent"] = "Mozilla/5.0 cricket-live-overlay/1.0"
@@ -335,6 +335,43 @@ def _header_team_scores(payload, team1, team2):
     return result
 
 
+def _miniscore_current_batting_team(payload, team1, team2):
+    """Resolve the batting side directly from miniscore identity fields.
+    Prefer team IDs when present; otherwise use batTeamScoreObj/batTeam names.
+    This is a strong live signal and must outrank human-readable status text.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    mini = payload.get("miniscore") or {}
+    if not isinstance(mini, dict):
+        return ""
+
+    for obj_key in ("batTeamScoreObj", "batTeam"):
+        obj = mini.get(obj_key) or {}
+        if not isinstance(obj, dict):
+            continue
+        tid = obj.get("teamId") or obj.get("id") or obj.get("batTeamId")
+        if tid not in (None, ""):
+            for key, team in (("team1", team1), ("team2", team2)):
+                hobj = (payload.get("matchHeader") or {}).get(key) or {}
+                htid = hobj.get("teamId") or hobj.get("id") if isinstance(hobj, dict) else None
+                if htid not in (None, "") and str(htid) == str(tid):
+                    return team
+
+        name = _team_name(obj)
+        if _team_matches(name, team1):
+            return team1
+        if _team_matches(name, team2):
+            return team2
+
+    name = _clean(mini.get("batTeamName") or mini.get("batTeamShortName"))
+    if _team_matches(name, team1):
+        return team1
+    if _team_matches(name, team2):
+        return team2
+    return ""
+
+
 def _header_current_batting_team(payload, team1, team2):
     """Resolve the current innings from matchHeader.currBatTeamId.
     This is especially important at innings breaks/stumps, where miniscore
@@ -606,8 +643,12 @@ def _extract_live(match):
             pass
     if header_batting_team:
         batting_team = header_batting_team
-    elif status_batting_team:
-        batting_team = status_batting_team
+    else:
+        mini_batting_team = _miniscore_current_batting_team(payload, team1, team2)
+        if mini_batting_team:
+            batting_team = mini_batting_team
+        elif status_batting_team:
+            batting_team = status_batting_team
     score = bat_obj.get("teamScore", bat_obj.get("score", mini.get("teamScore")))
     wickets = bat_obj.get("teamWkts", bat_obj.get("wickets", mini.get("teamWkts")))
     overs = mini.get("overs", mini.get("oversStr", ""))
@@ -720,12 +761,16 @@ def _extract_live(match):
         code1, code2 = main.team_code(team1), main.team_code(team2)
         batting_index = 0 if _norm(batting_team) in {_norm(code1), _norm(team1)} else 1
 
-    # At innings break/stumps Cricbuzz can switch batTeam to the next innings
-    # while teamScore/teamWkts and the batsmen still describe the completed
-    # innings. The scorecard is authoritative for which team owns that score.
-    status_team = _status_batting_team(payload, team1, team2)
-    if status_team:
-        batting_index = 0 if _team_matches(status_team, team1) else 1
+    # Fail-safe innings identity priority:
+    # 1) matchHeader.currBatTeamId (strongest explicit identity)
+    # 2) miniscore batting-team identity
+    # 3) human-readable status/result text (weak fallback only)
+    header_team = _header_current_batting_team(payload, team1, team2)
+    mini_team = _miniscore_current_batting_team(payload, team1, team2)
+    if header_team:
+        batting_index = 0 if _team_matches(header_team, team1) else 1
+    elif mini_team:
+        batting_index = 0 if _team_matches(mini_team, team1) else 1
     else:
         batting_index = _resolve_batting_index(match, team1, team2, score, wickets, batting_index)
 

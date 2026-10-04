@@ -212,8 +212,8 @@ def _parse_compact_score_text(text, team1="", team2=""):
             a = re.escape(_clean(alias))
             rx = re.compile(
                 r"(?i)(?<![A-Za-z0-9])" + a +
-                r"\\s*(\\d+)\\s*[-/]\\s*(\\d+)"
-                r"(?:\\s*\\((\\d+(?:\\.\\d+)?)\\s*(?:ov|overs?)\\))?"
+                r"\s*(\d+)\s*[-/]\s*(\d+)"
+                r"(?:\s*\((\d+(?:\.\d+)?)\s*(?:ov|overs?)\))?"
             )
             m = rx.search(text)
             if m:

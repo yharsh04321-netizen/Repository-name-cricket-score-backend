@@ -45,7 +45,7 @@ def get_matches():
                 # commonly uses /cricket-match-squads/<id> (and similar routes).
                 # Accept both so a match does not disappear from the selector
                 # simply because it is still upcoming/today.
-                m = re.search(r"/(?:live-cricket-scores|cricket-match-[a-z-]+)/(\d+)(?:/([^?#\"']+))?", href)
+                m = re.search(r"/live-cricket-scores/(\d+)(?:/([^?#\"']+))?", href)
                 if not m:
                     continue
                 mid, slug = m.group(1), (m.group(2) or "")

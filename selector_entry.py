@@ -40,7 +40,12 @@ def get_matches():
             soup = BeautifulSoup(r.text, "html.parser")
             for a in soup.find_all("a", href=True):
                 href = a.get("href", "")
-                m = re.search(r"/live-cricket-scores/(\d+)(?:/([^?#\"']+))?", href)
+                # Cricbuzz uses different match-link routes depending on page:
+                # live pages use /live-cricket-scores/<id>, while the schedule
+                # commonly uses /cricket-match-squads/<id> (and similar routes).
+                # Accept both so a match does not disappear from the selector
+                # simply because it is still upcoming/today.
+                m = re.search(r"/(?:live-cricket-scores|cricket-match-[a-z-]+)/(\d+)(?:/([^?#\"']+))?", href)
                 if not m:
                     continue
                 mid, slug = m.group(1), (m.group(2) or "")
@@ -75,7 +80,12 @@ def get_upcoming_matches(exclude_ids=None):
             soup = BeautifulSoup(r.text, "html.parser")
             for a in soup.find_all("a", href=True):
                 href = a.get("href", "")
-                m = re.search(r"/live-cricket-scores/(\d+)(?:/([^?#\"']+))?", href)
+                # Cricbuzz uses different match-link routes depending on page:
+                # live pages use /live-cricket-scores/<id>, while the schedule
+                # commonly uses /cricket-match-squads/<id> (and similar routes).
+                # Accept both so a match does not disappear from the selector
+                # simply because it is still upcoming/today.
+                m = re.search(r"/(?:live-cricket-scores|cricket-match-[a-z-]+)/(\d+)(?:/([^?#\"']+))?", href)
                 if not m:
                     continue
                 mid, slug = m.group(1), (m.group(2) or "")
@@ -106,8 +116,11 @@ def get_upcoming_matches(exclude_ids=None):
                 vm = re.search(r"(?i)•\s*([^•]+?)(?:\s+\d{1,2}:\d{2}|$)", context)
                 if vm:
                     venue = re.sub(r"\s+", " ", vm.group(1)).strip()
+                # Always normalize the selected match to the live-score URL,
+                # regardless of whether discovery came from squads/facts/schedule.
+                live_url = f"https://www.cricbuzz.com/live-cricket-scores/{mid}/{slug}" if slug else f"https://www.cricbuzz.com/live-cricket-scores/{mid}"
                 found.append({"id":mid,"name":name[:180],"date":match_date.strftime("%d %b %Y"),
-                    "time":"","venue":venue[:180],"url":f"https://www.cricbuzz.com/live-cricket-scores/{mid}/{slug}" if slug else f"https://www.cricbuzz.com/live-cricket-scores/{mid}","_date":match_date})
+                    "time":"","venue":venue[:180],"url":live_url,"_date":match_date})
                 seen.add(mid)
         except Exception as exc:
             print("upcoming source error:", repr(exc))

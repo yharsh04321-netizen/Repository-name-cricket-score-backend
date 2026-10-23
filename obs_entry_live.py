@@ -21,10 +21,17 @@ def _scorecard_url(url):
 def _team_code(name):
     n = " ".join(str(name or "").split()).strip().upper()
     aliases = {
-        "INDIA":"IND", "WEST INDIES":"WI", "AUSTRALIA":"AUS",
-        "SOUTH AFRICA":"RSA", "ENGLAND":"ENG", "SRI LANKA":"SL",
-        "PAKISTAN":"PAK", "BANGLADESH":"BAN", "AFGHANISTAN":"AFG",
-        "NEW ZEALAND":"NZ", "ZIMBABWE":"ZIM", "IRELAND":"IRE",
+        "INDIA":"IND", "INDIA WOMEN":"INDW", "INDIA A WOMEN":"INDAW",
+        "WEST INDIES":"WI", "WEST INDIES WOMEN":"WIW",
+        "AUSTRALIA":"AUS", "AUSTRALIA WOMEN":"AUSW",
+        "SOUTH AFRICA":"RSA", "SOUTH AFRICA WOMEN":"RSAW",
+        "ENGLAND":"ENG", "ENGLAND WOMEN":"ENGW",
+        "SRI LANKA":"SL", "SRI LANKA WOMEN":"SLW",
+        "PAKISTAN":"PAK", "PAKISTAN WOMEN":"PAKW",
+        "BANGLADESH":"BAN", "BANGLADESH WOMEN":"BANW",
+        "AFGHANISTAN":"AFG", "NEW ZEALAND":"NZ", "NEW ZEALAND WOMEN":"NZW",
+        "ZIMBABWE":"ZIM", "ZIMBABWE WOMEN":"ZIMW",
+        "IRELAND":"IRE", "IRELAND WOMEN":"IREW",
     }
     return aliases.get(n, n[:5] or "T1")
 

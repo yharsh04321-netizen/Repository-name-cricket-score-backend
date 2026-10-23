@@ -107,6 +107,17 @@ def norm_team(s):
     n = re.sub(r"[^a-z0-9]+", "", clean(s).lower())
     aliases = {
         "wi":"westindies","westindies":"westindies","ind":"india","india":"india",
+        "zimw":"zimbabwewomen","zimbabwewomen":"zimbabwewomen",
+        "indw":"indiawomen","indiawomen":"indiawomen",
+        "wiw":"westindieswomen","westindieswomen":"westindieswomen",
+        "ausw":"australiawomen","australiawomen":"australiawomen",
+        "rsaw":"southafricawomen","southafricawomen":"southafricawomen",
+        "engw":"englandwomen","englandwomen":"englandwomen",
+        "slw":"srilankawomen","srilankawomen":"srilankawomen",
+        "pakw":"pakistanwomen","pakistanwomen":"pakistanwomen",
+        "banw":"bangladeshwomen","bangladeshwomen":"bangladeshwomen",
+        "nzw":"newzealandwomen","newzealandwomen":"newzealandwomen",
+        "irew":"irelandwomen","irelandwomen":"irelandwomen",
         "jk":"jammukashmir","jammukashmir":"jammukashmir","jammuandkashmir":"jammukashmir",
         "roi":"restofindia","restofindia":"restofindia",
     }

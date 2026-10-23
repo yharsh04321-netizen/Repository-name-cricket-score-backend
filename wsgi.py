@@ -684,14 +684,15 @@ def _extract_live(match):
                 )
         except Exception:
             pass
-    if header_batting_team:
+    # Prefer live miniscore identity during active play. The header's
+    # currBatTeamId can lag briefly across an innings switch.
+    mini_batting_team = _miniscore_current_batting_team(payload, team1, team2)
+    if mini_batting_team:
+        batting_team = mini_batting_team
+    elif header_batting_team:
         batting_team = header_batting_team
-    else:
-        mini_batting_team = _miniscore_current_batting_team(payload, team1, team2)
-        if mini_batting_team:
-            batting_team = mini_batting_team
-        elif status_batting_team:
-            batting_team = status_batting_team
+    elif status_batting_team:
+        batting_team = status_batting_team
     score = bat_obj.get("teamScore", bat_obj.get("score", mini.get("teamScore")))
     wickets = bat_obj.get("teamWkts", bat_obj.get("wickets", mini.get("teamWkts")))
     overs = mini.get("overs", mini.get("oversStr", ""))
@@ -814,10 +815,12 @@ def _extract_live(match):
     # 3) human-readable status/result text (weak fallback only)
     header_team = _header_current_batting_team(payload, team1, team2)
     mini_team = _miniscore_current_batting_team(payload, team1, team2)
-    if header_team:
-        batting_index = 0 if _team_matches(header_team, team1) else 1
-    elif mini_team:
+    # Use the same priority as score/player extraction so the displayed
+    # batting side follows the live miniscore across an innings switch.
+    if mini_team:
         batting_index = 0 if _team_matches(mini_team, team1) else 1
+    elif header_team:
+        batting_index = 0 if _team_matches(header_team, team1) else 1
     else:
         batting_index = _resolve_batting_index(match, team1, team2, score, wickets, batting_index)
 

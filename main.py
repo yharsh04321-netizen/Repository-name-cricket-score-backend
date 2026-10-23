@@ -11,7 +11,7 @@ CACHE_SECONDS = 2
 cache, last_scores = {}, {}
 
 FLAGS = {"india":"🇮🇳","west indies":"🌴","australia":"🇦🇺","south africa":"🇿🇦","england":"🏴","sri lanka":"🇱🇰","pakistan":"🇵🇰","bangladesh":"🇧🇩","afghanistan":"🇦🇫","new zealand":"🇳🇿","zimbabwe":"🇿🇼","ireland":"🇮🇪","nepal":"🇳🇵","oman":"🇴🇲","malaysia":"🇲🇾","hong kong":"🇭🇰","usa":"🇺🇸","canada":"🇨🇦","bermuda":"🇧🇲","nigeria":"🇳🇬","sierra leone":"🇸🇱"}
-CODES = {"INDIA":"IND","WEST INDIES":"WI","AUSTRALIA":"AUS","SOUTH AFRICA":"RSA","ENGLAND":"ENG","SRI LANKA":"SL","PAKISTAN":"PAK","BANGLADESH":"BAN","AFGHANISTAN":"AFG","NEW ZEALAND":"NZ","ZIMBABWE":"ZIM","IRELAND":"IRE"}
+CODES = {"INDIA":"IND","INDIA WOMEN":"INDW","INDIA A WOMEN":"INDAW","WEST INDIES":"WI","WEST INDIES WOMEN":"WIW","AUSTRALIA":"AUS","AUSTRALIA WOMEN":"AUSW","SOUTH AFRICA":"RSA","SOUTH AFRICA WOMEN":"RSAW","ENGLAND":"ENG","ENGLAND WOMEN":"ENGW","SRI LANKA":"SL","SRI LANKA WOMEN":"SLW","PAKISTAN":"PAK","PAKISTAN WOMEN":"PAKW","BANGLADESH":"BAN","BANGLADESH WOMEN":"BANW","AFGHANISTAN":"AFG","NEW ZEALAND":"NZ","NEW ZEALAND WOMEN":"NZW","ZIMBABWE":"ZIM","ZIMBABWE WOMEN":"ZIMW","IRELAND":"IRE","IRELAND WOMEN":"IREW"}
 
 # Safety fallback for the currently selected match only. Normal live data is always preferred.
 KNOWN_CURRENT = {"151543": {"west indies": "405-7"}}

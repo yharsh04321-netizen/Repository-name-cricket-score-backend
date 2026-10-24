@@ -329,6 +329,31 @@ def _fixed_selected_score():
             except Exception as exc:
                 print("selected-score fallback failed:", repr(exc))
 
+        # Match discovery can fail even when the live API has a valid snapshot.
+        # In that case the placeholder name "Match <id>" prevents the HTML
+        # scorecard parser from associating totals with the actual teams.
+        # Promote the team names from the live snapshot and retry score parsing
+        # once with a correctly identified match, preserving the original
+        # live player/status data unless the retry supplies better score fields.
+        if isinstance(data, dict) and data.get("team1") and data.get("team2"):
+            match["name"] = f"{data['team1']} vs {data['team2']}"
+            if data.get("url") and "cricbuzz.com/" in str(data.get("url")):
+                match["url"] = data["url"]
+            try:
+                cache = getattr(entry.wsgi, "SCORECARD_CACHE", None)
+                if isinstance(cache, dict):
+                    cache.pop(mid, None)
+                refreshed = entry.wsgi._extract_live(match)
+                if isinstance(refreshed, dict):
+                    for key in ("team1_score", "team2_score", "team1_overs", "team2_overs"):
+                        value = refreshed.get(key)
+                        if value not in (None, "", "-"):
+                            data[key] = value
+                    if data.get("batting_team") in (None, "") and refreshed.get("batting_team"):
+                        data["batting_team"] = refreshed["batting_team"]
+            except Exception as exc:
+                print("selected-score identified score retry skipped:", repr(exc))
+
         if data is not None:
             try:
                 data = entry._raw_score_fix(match, data)

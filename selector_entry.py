@@ -373,7 +373,7 @@ def _fixed_selected_score():
                 crr_text = str(data.get("crr") or "").replace(",", "")
                 try:
                     crr_value = float(crr_text)
-                    om = re.match(r"^\\s*(\\d+)(?:\\.(\\d+))?\\s*$", ov_text)
+                    om = re.match(r"^\s*(\d+)(?:\.(\d+))?\s*$", ov_text)
                     if not om:
                         continue
                     whole = int(om.group(1))

@@ -360,6 +360,33 @@ def _fixed_selected_score():
             except Exception as exc:
                 print("selected-score raw score fix skipped:", repr(exc))
 
+        # If Cricbuzz omits the current innings total but still publishes
+        # CRR and overs, recover the approximate run total without inventing
+        # a wicket count. Use "runs-*" to make the missing wicket data explicit.
+        if isinstance(data, dict):
+            for idx in (0, 1):
+                score_key = f"team{idx + 1}_score"
+                overs_key = f"team{idx + 1}_overs"
+                if data.get(score_key) not in (None, "", "-"):
+                    continue
+                ov_text = str(data.get(overs_key) or "")
+                crr_text = str(data.get("crr") or "").replace(",", "")
+                try:
+                    crr_value = float(crr_text)
+                    om = re.match(r"^\\s*(\\d+)(?:\\.(\\d+))?\\s*$", ov_text)
+                    if not om:
+                        continue
+                    whole = int(om.group(1))
+                    ball_digits = om.group(2) or "0"
+                    balls = min(int(ball_digits[:1]), 5)
+                    legal_overs = whole + balls / 6.0
+                    if legal_overs <= 0 or crr_value < 0:
+                        continue
+                    estimated_runs = int(round(crr_value * legal_overs))
+                    data[score_key] = f"{estimated_runs}-*"
+                except (TypeError, ValueError):
+                    pass
+
         # Even when the live parser returns a player snapshot, its total-score
         # fields can be missing ("-"). In that case, merge scorecard totals into
         # the live response instead of skipping the fallback just because data

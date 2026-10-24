@@ -335,6 +335,27 @@ def _fixed_selected_score():
             except Exception as exc:
                 print("selected-score raw score fix skipped:", repr(exc))
 
+        # Even when the live parser returns a player snapshot, its total-score
+        # fields can be missing ("-"). In that case, merge scorecard totals into
+        # the live response instead of skipping the fallback just because data
+        # is not None. Preserve live batsmen, bowler, status, and over display.
+        if data is not None and (
+            data.get("team1_score") in (None, "", "-")
+            or data.get("team2_score") in (None, "", "-")
+        ):
+            try:
+                page_data = _public_page_score_fallback(match)
+                if isinstance(page_data, dict):
+                    for key in ("team1_score", "team2_score", "team1_overs", "team2_overs"):
+                        current = data.get(key)
+                        fallback = page_data.get(key)
+                        if fallback not in (None, "", "-") and current in (None, "", "-"):
+                            data[key] = fallback
+                    if data.get("batting_team") in (None, ""):
+                        data["batting_team"] = page_data.get("batting_team", "")
+            except Exception as exc:
+                print("selected-score public page score merge skipped:", repr(exc))
+
         if data is None:
             try:
                 data = _public_page_score_fallback(match)

@@ -693,8 +693,15 @@ def _extract_live(match):
         batting_team = header_batting_team
     elif status_batting_team:
         batting_team = status_batting_team
+    # Some Cricbuzz responses put the actual innings total on batTeamScoreObj
+    # while batTeam only carries the team identity. Read both structures before
+    # trying the scorecard/page fallbacks.
     score = bat_obj.get("teamScore", bat_obj.get("score", mini.get("teamScore")))
+    if _missing_live_value(score):
+        score = bat_score_obj.get("teamScore", bat_score_obj.get("score", mini.get("teamScore")))
     wickets = bat_obj.get("teamWkts", bat_obj.get("wickets", mini.get("teamWkts")))
+    if _missing_live_value(wickets):
+        wickets = bat_score_obj.get("teamWkts", bat_score_obj.get("wickets", bat_score_obj.get("teamWickets", mini.get("teamWkts"))))
     overs = mini.get("overs", mini.get("oversStr", ""))
 
     # Cricbuzz can temporarily publish a valid miniscore without the
